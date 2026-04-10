@@ -15,8 +15,8 @@ actor RateLimitStore {
         buckets.removeAll()
     }
 
-    /// Returns whether the request is allowed, and if not the seconds until the window resets.
-    func check(key: String, limit: Int, windowSeconds: Int) -> (allowed: Bool, retryAfter: Int) {
+    /// Returns whether the request is allowed, the current attempt count, and if rejected the seconds until the window resets.
+    func check(key: String, limit: Int, windowSeconds: Int) -> (allowed: Bool, count: Int, retryAfter: Int) {
         let now = Date()
         let windowStart = now.addingTimeInterval(-Double(windowSeconds))
 
@@ -36,12 +36,12 @@ actor RateLimitStore {
                 retryAfter = windowSeconds
             }
             buckets[key] = timestamps
-            return (false, retryAfter)
+            return (false, timestamps.count, retryAfter)
         }
 
         timestamps.append(now)
         buckets[key] = timestamps
-        return (true, 0)
+        return (true, timestamps.count, 0)
     }
 }
 
@@ -86,11 +86,12 @@ struct RateLimitMiddleware: AsyncMiddleware {
         }
 
         let key = policy.makeKey(for: request)
-        let (allowed, retryAfter) = await RateLimitStore.shared.check(
+        let (allowed, count, retryAfter) = await RateLimitStore.shared.check(
             key: key,
             limit: policy.limit,
             windowSeconds: policy.windowSeconds
         )
+        request.rateLimitAttempt = count
 
         guard allowed else {
             request.logger.warning("Rate limit exceeded", metadata: ["key": .string(key)])
@@ -184,7 +185,16 @@ extension Route {
     }
 }
 
+private struct RateLimitAttemptKey: StorageKey {
+    typealias Value = Int
+}
+
 extension Request {
+    var rateLimitAttempt: Int? {
+        get { storage[RateLimitAttemptKey.self] }
+        set { storage[RateLimitAttemptKey.self] = newValue }
+    }
+
     var clientIdentifier: String {
         headers.first(name: "X-Forwarded-For")
             ?? headers.first(name: "X-Real-IP")
