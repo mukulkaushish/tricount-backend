@@ -45,8 +45,15 @@ struct AddPerformanceIndexes: AsyncMigration {
 
         for idx in indexes {
             let name = "idx_\(idx.table)_\(idx.column)"
+            // MySQL doesn't support CREATE INDEX IF NOT EXISTS — check first
+            let rows = try await sql.raw("""
+                SELECT COUNT(*) AS cnt FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = '\(unsafeRaw: idx.table)' AND index_name = '\(unsafeRaw: name)'
+                """).all()
+            let exists = (try? rows.first?.decode(column: "cnt", as: Int.self)) ?? 0
+            guard exists == 0 else { continue }
+
             try await sql.raw("""
-                CREATE INDEX IF NOT EXISTS \(unsafeRaw: name) ON \(unsafeRaw: idx.table) (\(unsafeRaw: idx.column))
+                CREATE INDEX \(unsafeRaw: name) ON \(unsafeRaw: idx.table) (\(unsafeRaw: idx.column))
                 """).run()
         }
     }

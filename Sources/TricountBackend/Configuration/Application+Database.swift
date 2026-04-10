@@ -1,5 +1,6 @@
 import Fluent
 import FluentMySQLDriver
+import NIOSSL
 import Vapor
 
 extension Application {
@@ -10,6 +11,9 @@ extension Application {
         let password = Environment.get("MYSQL_PASSWORD") ?? "tricount"
         let database = Environment.get("MYSQL_DATABASE") ?? "tricount"
 
+        var tlsConfig = TLSConfiguration.makeClientConfiguration()
+        tlsConfig.certificateVerification = .none
+
         databases.use(
             DatabaseConfigurationFactory.mysql(
                 hostname: hostname,
@@ -17,6 +21,7 @@ extension Application {
                 username: username,
                 password: password,
                 database: database,
+                tlsConfiguration: tlsConfig,
                 maxConnectionsPerEventLoop: 4
             ),
             as: .mysql
