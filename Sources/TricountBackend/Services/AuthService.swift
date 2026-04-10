@@ -78,7 +78,7 @@ struct AuthService {
         let user = User(
             email: email,
             passwordHash: hash,
-            displayName: dto.displayName.trimmingCharacters(in: .whitespaces),
+            displayName: dto.displayName.trimmingCharacters(in: .whitespacesAndNewlines),
             isEmailVerified: false,
             provider: "email"
         )
@@ -1095,7 +1095,7 @@ struct AuthService {
     }
 
     private func validateDisplayName(_ name: String) throws {
-        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= DisplayNamePolicy.minLength && trimmed.count <= DisplayNamePolicy.maxLength else {
             throw Abort(.badRequest, reason: "Display name must be \(DisplayNamePolicy.minLength)–\(DisplayNamePolicy.maxLength) characters")
         }

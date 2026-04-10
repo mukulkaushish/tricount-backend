@@ -88,7 +88,11 @@ struct RouteDocumentationGenerator {
                 ["key": "challengeToken", "value": "", "type": "string"],
                 ["key": "email", "value": "test@example.com", "type": "string"],
                 ["key": "password", "value": "Test1234", "type": "string"],
-                ["key": "displayName", "value": "Test User", "type": "string"]
+                ["key": "displayName", "value": "Test User", "type": "string"],
+                ["key": "otpCode", "value": "123456", "type": "string"],
+                ["key": "idToken", "value": "", "type": "string"],
+                ["key": "phoneNumber", "value": "+1234567890", "type": "string"],
+                ["key": "credentialId", "value": "", "type": "string"]
             ],
             "auth": [
                 "type": "bearer",
@@ -189,11 +193,11 @@ struct RouteDocumentationGenerator {
         case "displayName": return "{{displayName}}"
         case "refreshToken": return "{{refreshToken}}"
         case "challengeToken": return "{{challengeToken}}"
-        case "idToken": return "ID_TOKEN_HERE"
-        case "code": return "123456"
+        case "idToken": return "{{idToken}}"
+        case "code": return "{{otpCode}}"
         case "newPassword": return "NewPass1234"
-        case "phoneNumber": return "+1234567890"
-        case "credentialId": return "credential-id-here"
+        case "phoneNumber": return "{{phoneNumber}}"
+        case "credentialId": return "{{credentialId}}"
         default: break
         }
 

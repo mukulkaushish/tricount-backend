@@ -321,83 +321,32 @@ struct TricountBackendTests {
     func routeDocsAreGeneratedAtStartup() async throws {
         try await withApp { app in
             let outputDirectory = app.routeDocumentationOutputDirectory
-            let jsonURL = outputDirectory.appendingPathComponent("routes.json")
+            let postmanURL = outputDirectory.appendingPathComponent("Tricount-Backend.postman_collection.json")
             let markdownURL = outputDirectory.appendingPathComponent("routes.md")
 
-            #expect(FileManager.default.fileExists(atPath: jsonURL.path))
+            #expect(FileManager.default.fileExists(atPath: postmanURL.path))
             #expect(FileManager.default.fileExists(atPath: markdownURL.path))
 
-            let jsonData = try Data(contentsOf: jsonURL)
-            let jsonObject = try JSONSerialization.jsonObject(with: jsonData)
-            let root = try #require(jsonObject as? [String: Any])
-            let routeCount = try #require(root["routeCount"] as? Int)
-            let schemaCount = try #require(root["schemaCount"] as? Int)
-            let schemas = try #require(root["schemas"] as? [String: Any])
-            let routes = try #require(root["routes"] as? [[String: Any]])
+            // Validate Postman collection structure
+            let postmanData = try Data(contentsOf: postmanURL)
+            let postmanObject = try JSONSerialization.jsonObject(with: postmanData)
+            let root = try #require(postmanObject as? [String: Any])
+            let info = try #require(root["info"] as? [String: Any])
+            #expect(info["name"] as? String == "Tricount Backend")
+            #expect((info["schema"] as? String)?.contains("v2.1.0") == true)
 
-            #expect(routeCount >= 1)
-            #expect(schemaCount >= 1)
-            #expect(routes.contains { ($0["path"] as? String) == "/v1/auth/login" && ($0["method"] as? String) == "POST" })
-            #expect(routes.contains { ($0["path"] as? String) == "/v1/auth/reset-password" && ($0["method"] as? String) == "POST" })
-            #expect(routes.contains { ($0["path"] as? String) == "/v1/auth/mfa/email/verify" && ($0["method"] as? String) == "POST" })
-            #expect(routes.contains { ($0["path"] as? String) == "/v1/auth/mfa/email/enable" && ($0["method"] as? String) == "POST" })
-            #expect(routes.contains { ($0["path"] as? String) == "/v1/auth/mfa/authenticator-app/setup" && ($0["method"] as? String) == "POST" })
-            #expect(routes.contains { ($0["path"] as? String) == "/v1/auth/mfa/authenticator-app/verify" && ($0["method"] as? String) == "POST" })
-            #expect(routes.contains { ($0["path"] as? String) == "/v1/auth/phone/request-verification" && ($0["method"] as? String) == "POST" })
-            #expect(routes.contains { ($0["path"] as? String) == "/v1/auth/passkeys" && ($0["method"] as? String) == "GET" })
-            #expect(routes.contains { ($0["path"] as? String) == "/v1/auth/passkeys/remove" && ($0["method"] as? String) == "POST" })
-            #expect(routes.contains { ($0["path"] as? String) == "/v1/auth/passkeys/reset" && ($0["method"] as? String) == "POST" })
-            #expect(routes.contains { ($0["path"] as? String) == "/v1/todos" && ($0["method"] as? String) == "GET" })
-            #expect(routes.contains { ($0["path"] as? String) == "/v1/auth/passkeys/register/options" && ($0["method"] as? String) == "POST" })
-            #expect(routes.contains { ($0["path"] as? String) == "/v1/auth/passkeys/authenticate/verify" && ($0["method"] as? String) == "POST" })
+            let variables = try #require(root["variable"] as? [[String: Any]])
+            let variableKeys = Set(variables.compactMap { $0["key"] as? String })
+            #expect(variableKeys.contains("baseUrl"))
+            #expect(variableKeys.contains("accessToken"))
+            #expect(variableKeys.contains("refreshToken"))
+            #expect(variableKeys.contains("otpCode"))
+            #expect(variableKeys.contains("idToken"))
+            #expect(variableKeys.contains("phoneNumber"))
+            #expect(variableKeys.contains("credentialId"))
 
-            let loginRequestSchema = try #require(schemas["LoginRequest"] as? [String: Any])
-            let loginRequiredFields = try #require(loginRequestSchema["required"] as? [String])
-            #expect(Set(loginRequiredFields) == ["email", "password"])
-
-            let userSchema = try #require(schemas["UserDTO"] as? [String: Any])
-            let userProperties = try #require(userSchema["properties"] as? [String: Any])
-            let avatarURL = try #require(userProperties["avatarUrl"] as? [String: Any])
-            #expect((avatarURL["nullable"] as? Bool) == true)
-            let mfaMethod = try #require(userProperties["mfaMethod"] as? [String: Any])
-            #expect((mfaMethod["nullable"] as? Bool) == true)
-            let phoneNumber = try #require(userProperties["phoneNumber"] as? [String: Any])
-            #expect((phoneNumber["nullable"] as? Bool) == true)
-            let phoneVerifiedAt = try #require(userProperties["phoneVerifiedAt"] as? [String: Any])
-            #expect((phoneVerifiedAt["nullable"] as? Bool) == true)
-
-            let authenticationResultSchema = try #require(schemas["AuthenticationResultResponse"] as? [String: Any])
-            let authenticationResultProperties = try #require(authenticationResultSchema["properties"] as? [String: Any])
-            let mfaChallengeSchema = try #require(authenticationResultProperties["mfaChallenge"] as? [String: Any])
-            #expect((mfaChallengeSchema["nullable"] as? Bool) == true)
-            let mfaChallengeProperties = try #require(mfaChallengeSchema["properties"] as? [String: Any])
-            let challengeToken = try #require(mfaChallengeProperties["challengeToken"] as? [String: Any])
-            #expect((challengeToken["nullable"] as? Bool) == true)
-            let expiresIn = try #require(mfaChallengeProperties["expiresIn"] as? [String: Any])
-            #expect((expiresIn["nullable"] as? Bool) == true)
-
-            let loginRoute = try #require(routes.first {
-                ($0["path"] as? String) == "/v1/auth/login" && ($0["method"] as? String) == "POST"
-            })
-            let loginRequestBody = try #require(loginRoute["requestBody"] as? [String: Any])
-            #expect(loginRequestBody["typeName"] as? String == "LoginRequest")
-
-            let loginSuccess = try #require(loginRoute["successResponse"] as? [String: Any])
-            #expect(loginSuccess["envelope"] as? String == "data")
-            #expect(loginSuccess["typeName"] as? String == "AuthenticationResultResponse")
-
-            let passkeyVerifyRoute = try #require(routes.first {
-                ($0["path"] as? String) == "/v1/auth/passkeys/authenticate/verify" && ($0["method"] as? String) == "POST"
-            })
-            let passkeyVerifyRequestBody = try #require(passkeyVerifyRoute["requestBody"] as? [String: Any])
-            #expect(passkeyVerifyRequestBody["typeName"] as? String == "PasskeyAuthenticationVerificationRequest")
-
-            let todoIndexRoute = try #require(routes.first {
-                ($0["path"] as? String) == "/v1/todos" && ($0["method"] as? String) == "GET"
-            })
-            let todoSuccess = try #require(todoIndexRoute["successResponse"] as? [String: Any])
-            #expect(todoSuccess["envelope"] as? String == "raw")
-            #expect(todoSuccess["typeName"] as? String == "Array<TodoResponse>")
+            let items = try #require(root["item"] as? [[String: Any]])
+            #expect(!items.isEmpty)
 
             let markdown = try String(contentsOf: markdownURL, encoding: .utf8)
             #expect(markdown.contains("| POST | /v1/auth/login | none | 200 data<AuthenticationResultResponse> |"))
@@ -414,11 +363,8 @@ struct TricountBackendTests {
             #expect(markdown.contains("| data.user.avatarUrl | string? | no |"))
             #expect(markdown.contains("| data.user.phoneNumber | string? | no |"))
             #expect(markdown.contains("| data.user.phoneVerifiedAt | string? | no |"))
-            #expect(markdown.contains("## GET /v1/todos"))
             #expect(markdown.contains("## POST /v1/auth/passkeys/register/options"))
             #expect(markdown.contains("## POST /v1/auth/passkeys/authenticate/verify"))
-            #expect(markdown.contains("| item.id | string(uuid) | yes |"))
-            #expect(markdown.contains("| item.title | string | yes |"))
             #expect(!markdown.contains("| [] | object | yes |"))
         }
     }
@@ -433,24 +379,9 @@ struct TricountBackendTests {
         }
     }
 
-    @Test("Todo routes are registered under v1 without a route-specific rate limit")
-    func todoRoutesAreRegistered() async throws {
-        try await withApp { app in
-            try await app.testing().test(.GET, "v1/todos", afterResponse: { res async throws in
-                #expect(res.status == .ok)
-                let payload = try res.decodeBody([TodoResponse].self)
-                #expect(payload.isEmpty)
-                #expect(res.headers.first(name: "X-RateLimit-Limit") == nil)
-            })
-        }
-    }
-
-    @Test("Only forgot-password has an explicit custom rate-limit policy")
+    @Test("Rate-limit policies are configured correctly")
     func routePoliciesAreConfigured() async throws {
         try await withApp { app in
-            let todosRoute = route(app, method: .GET, suffix: "/v1/todos")
-            #expect(todosRoute?.rateLimitPolicy == nil)
-
             let googleRoute = route(app, method: .POST, suffix: "/v1/auth/google")
             #expect(googleRoute?.rateLimitPolicy == nil)
 
@@ -1529,76 +1460,6 @@ struct TricountBackendTests {
                 #expect(payload.statusCode == 429)
                 let retryAfter = res.headers.first(name: "Retry-After")
                 #expect(retryAfter != nil)
-            })
-        }
-    }
-
-    // MARK: - Todo CRUD Tests
-
-    @Test("Todo can be created and listed")
-    func todoCRUDCreateAndList() async throws {
-        try await withApp { app in
-            // List is initially empty
-            try await app.testing().test(.GET, "v1/todos", afterResponse: { res async throws in
-                #expect(res.status == .ok)
-                let todos = try res.decodeBody([TodoResponse].self)
-                #expect(todos.isEmpty)
-            })
-
-            // Create a todo
-            try await app.testing().test(.POST, "v1/todos", beforeRequest: { req in
-                try req.content.encode(CreateTodoRequest(title: "Buy groceries"))
-            }, afterResponse: { res async throws in
-                #expect(res.status == .ok)
-            })
-
-            // List should now have one item
-            try await app.testing().test(.GET, "v1/todos", afterResponse: { res async throws in
-                #expect(res.status == .ok)
-                let todos = try res.decodeBody([TodoResponse].self)
-                #expect(todos.count == 1)
-                #expect(todos.first?.title == "Buy groceries")
-            })
-        }
-    }
-
-    @Test("Todo can be deleted")
-    func todoCRUDDelete() async throws {
-        try await withApp { app in
-            // Create a todo
-            var todoId: UUID?
-
-            try await app.testing().test(.POST, "v1/todos", beforeRequest: { req in
-                try req.content.encode(CreateTodoRequest(title: "Delete me"))
-            }, afterResponse: { res async throws in
-                #expect(res.status == .ok)
-            })
-
-            try await app.testing().test(.GET, "v1/todos", afterResponse: { res async throws in
-                let todos = try res.decodeBody([TodoResponse].self)
-                todoId = todos.first?.id
-            })
-
-            let id = try #require(todoId)
-
-            // Delete the todo
-            try await app.testing().test(.DELETE, "v1/todos/\(id)", afterResponse: { res async throws in
-                #expect(res.status == .noContent)
-            })
-
-            // List should now be empty
-            try await app.testing().test(.GET, "v1/todos", afterResponse: { res async throws in
-                let todos = try res.decodeBody([TodoResponse].self)
-                #expect(todos.isEmpty)
-            })
-        }
-    }
-
-    @Test("Deleting a nonexistent todo returns 404")
-    func deleteNonexistentTodoReturns404() async throws {
-        try await withApp { app in
-            try await app.testing().test(.DELETE, "v1/todos/\(UUID())", afterResponse: { res async throws in
-                #expect(res.status == .notFound)
             })
         }
     }

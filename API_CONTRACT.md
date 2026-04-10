@@ -3,7 +3,7 @@
 > **Base URL:** `https://api.splitser.dev/v1`
 > Replace with your actual server URL before deploying.
 
-> **Generated route docs:** Startup writes `routes.json` and `routes.md` automatically. By default they go to `Generated/` in local/prod runs and `.build/generated-route-docs/` in tests. Override with `ROUTE_DOCS_OUTPUT_DIR`.
+> **Generated route docs:** Startup writes `routes.md`, Postman collection, and HTML docs automatically. By default they go to `Generated/` in local/prod runs and `.build/generated-route-docs/` in tests. Override with `ROUTE_DOCS_OUTPUT_DIR`.
 
 ---
 
