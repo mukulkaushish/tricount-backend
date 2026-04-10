@@ -6,7 +6,6 @@ extension Application {
         // Execution order is defined by this registration list, not by folder order.
         // The numeric filename prefixes in `Sources/TricountBackend/Migrations/` are
         // only there to make the chronology obvious to humans.
-        migrations.add(CreateTodo())
         migrations.add(CreateUser())
         migrations.add(AddUserVerificationFields())
         migrations.add(AddAppleIdentifierToUsers())

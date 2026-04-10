@@ -1,8 +1,9 @@
 import Fluent
 import Foundation
 
-final class AuthenticatorAppSetupChallenge: Model, @unchecked Sendable {
+final class AuthenticatorAppSetupChallenge: Model, ExpiringRecord, @unchecked Sendable {
     static let schema = "authenticator_app_setup_challenges"
+    static let lifetime: OTPLifetime = .tenMinutes
 
     @ID(key: .id)
     var id: UUID?
@@ -37,7 +38,4 @@ final class AuthenticatorAppSetupChallenge: Model, @unchecked Sendable {
         self.expiresAt = expiresAt
         self.isUsed = isUsed
     }
-
-    var isExpired: Bool { expiresAt < Date() }
-    var isValid: Bool { !isUsed && !isExpired }
 }

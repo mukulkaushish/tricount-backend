@@ -27,10 +27,6 @@ private struct SocialIdentityProfile: Sendable {
 
 struct AuthService {
     let req: Request
-    private let mfaCodeLifetime: TimeInterval = 10 * 60
-    private let passwordResetCodeLifetime: TimeInterval = 10 * 60
-    private let phoneVerificationCodeLifetime: TimeInterval = 10 * 60
-    private let authenticatorAppSetupLifetime: TimeInterval = 10 * 60
 
     // MARK: - Login
 
@@ -402,7 +398,7 @@ struct AuthService {
         let challenge = AuthenticatorAppSetupChallenge(
             userId: userId,
             secret: secret,
-            expiresAt: Date().addingTimeInterval(authenticatorAppSetupLifetime)
+            expiresAt: AuthenticatorAppSetupChallenge.expirationFromNow
         )
         try await challenge.save(on: req.db)
 
@@ -716,7 +712,7 @@ struct AuthService {
         return AuthResponse(
             accessToken: accessToken,
             refreshToken: rawRefreshToken,
-            expiresIn: 3600,
+            expiresIn: Int(TokenLifetime.accessToken),
             user: UserDTO(from: user)
         )
     }
@@ -726,7 +722,7 @@ struct AuthService {
 
         let payload = UserJWTPayload(
             subject: .init(value: userId.uuidString),
-            expiration: .init(value: Date().addingTimeInterval(3600)),
+            expiration: .init(value: Date().addingTimeInterval(TokenLifetime.accessToken)),
             issuedAt: .init(value: Date()),
             userId: userId.uuidString
         )
@@ -738,7 +734,7 @@ struct AuthService {
         let refreshToken = RefreshToken(
             userId: userId,
             tokenHash: tokenHash,
-            expiresAt: Date().addingTimeInterval(30 * 24 * 3600)
+            expiresAt: Date().addingTimeInterval(TokenLifetime.refreshToken)
         )
         try await refreshToken.save(on: req.db)
 
@@ -761,7 +757,7 @@ struct AuthService {
             userId: userId,
             email: user.email,
             codeHash: sha256(code),
-            expiresAt: Date().addingTimeInterval(10 * 60)
+            expiresAt: EmailVerificationOTP.expirationFromNow
         )
         try await otp.save(on: req.db)
         return code
@@ -783,7 +779,7 @@ struct AuthService {
             userId: userId,
             email: user.email,
             codeHash: sha256(code),
-            expiresAt: Date().addingTimeInterval(passwordResetCodeLifetime)
+            expiresAt: PasswordResetOTP.expirationFromNow
         )
         try await otp.save(on: req.db)
         return code
@@ -802,7 +798,7 @@ struct AuthService {
             purpose: .enable,
             method: .email,
             codeHash: sha256(code),
-            expiresAt: Date().addingTimeInterval(mfaCodeLifetime)
+            expiresAt: EmailMFAChallenge.expirationFromNow
         )
         try await challenge.save(on: req.db)
         return code
@@ -827,7 +823,7 @@ struct AuthService {
             method: .email,
             challengeTokenHash: sha256(challengeToken),
             codeHash: sha256(code),
-            expiresAt: Date().addingTimeInterval(mfaCodeLifetime)
+            expiresAt: EmailMFAChallenge.expirationFromNow
         )
         try await challenge.save(on: req.db)
 
@@ -840,7 +836,7 @@ struct AuthService {
         return MFAChallengeResponse(
             method: "email",
             challengeToken: challengeToken,
-            expiresIn: Int(mfaCodeLifetime)
+            expiresIn: Int(EmailMFAChallenge.lifetime.interval)
         )
     }
 
@@ -860,14 +856,14 @@ struct AuthService {
             method: .authenticatorApp,
             challengeTokenHash: sha256(challengeToken),
             codeHash: "",
-            expiresAt: Date().addingTimeInterval(mfaCodeLifetime)
+            expiresAt: EmailMFAChallenge.expirationFromNow
         )
         try await challenge.save(on: req.db)
 
         return MFAChallengeResponse(
             method: EmailMFAChallenge.Method.authenticatorApp.rawValue,
             challengeToken: challengeToken,
-            expiresIn: Int(mfaCodeLifetime)
+            expiresIn: Int(EmailMFAChallenge.lifetime.interval)
         )
     }
 
@@ -904,28 +900,10 @@ struct AuthService {
             .filter(\.$user.$id == userId)
             .filter(\.$isUsed == false)
 
-        if let purpose {
-            let filtered = query.filter(\.$purposeRawValue == purpose.rawValue)
-            if let method {
-                try await filtered
-                    .filter(\.$methodRawValueStorage == method.rawValue)
-                    .set(\.$isUsed, to: true)
-                    .update()
-            } else {
-                try await filtered
-                    .set(\.$isUsed, to: true)
-                    .update()
-            }
-        } else if let method {
-            try await query
-                .filter(\.$methodRawValueStorage == method.rawValue)
-                .set(\.$isUsed, to: true)
-                .update()
-        } else {
-            try await query
-                .set(\.$isUsed, to: true)
-                .update()
-        }
+        if let purpose { _ = query.filter(\.$purposeRawValue == purpose.rawValue) }
+        if let method { _ = query.filter(\.$methodRawValueStorage == method.rawValue) }
+
+        try await query.set(\.$isUsed, to: true).update()
     }
 
     private func invalidateAuthenticatorAppSetupChallenges(for userId: UUID) async throws {
@@ -950,7 +928,7 @@ struct AuthService {
             userId: userId,
             phoneNumber: phoneNumber,
             codeHash: sha256(code),
-            expiresAt: Date().addingTimeInterval(phoneVerificationCodeLifetime)
+            expiresAt: PhoneVerificationOTP.expirationFromNow
         )
         try await challenge.save(on: req.db)
         return code
@@ -1074,13 +1052,7 @@ struct AuthService {
 
     private func generateSecureToken() -> String {
         let key = SymmetricKey(size: .bits256)
-        return key.withUnsafeBytes { bytes in
-            Data(Array(bytes))
-                .base64EncodedString()
-                .replacingOccurrences(of: "+", with: "-")
-                .replacingOccurrences(of: "/", with: "_")
-                .replacingOccurrences(of: "=", with: "")
-        }
+        return key.withUnsafeBytes { Base64URL.encode(Data(Array($0))) }
     }
 
     private func generateOTPCode() -> String {
@@ -1105,11 +1077,11 @@ struct AuthService {
     // MARK: - Validation
 
     private func validatePassword(_ password: String) throws {
-        guard password.count >= 8 else {
-            throw Abort(.badRequest, reason: "Password must be at least 8 characters")
+        guard password.count >= PasswordPolicy.minLength else {
+            throw Abort(.badRequest, reason: "Password must be at least \(PasswordPolicy.minLength) characters")
         }
-        guard password.count <= 128 else {
-            throw Abort(.badRequest, reason: "Password must not exceed 128 characters")
+        guard password.count <= PasswordPolicy.maxLength else {
+            throw Abort(.badRequest, reason: "Password must not exceed \(PasswordPolicy.maxLength) characters")
         }
         guard password.contains(where: { $0.isUppercase }) else {
             throw Abort(.badRequest, reason: "Password must contain at least one uppercase letter")
@@ -1124,8 +1096,8 @@ struct AuthService {
 
     private func validateDisplayName(_ name: String) throws {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
-        guard trimmed.count >= 2 && trimmed.count <= 64 else {
-            throw Abort(.badRequest, reason: "Display name must be 2–64 characters")
+        guard trimmed.count >= DisplayNamePolicy.minLength && trimmed.count <= DisplayNamePolicy.maxLength else {
+            throw Abort(.badRequest, reason: "Display name must be \(DisplayNamePolicy.minLength)–\(DisplayNamePolicy.maxLength) characters")
         }
     }
 

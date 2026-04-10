@@ -1,8 +1,9 @@
 import Fluent
 import Foundation
 
-final class EmailMFAChallenge: Model, @unchecked Sendable {
+final class EmailMFAChallenge: Model, ExpiringRecord, @unchecked Sendable {
     static let schema = "email_mfa_challenges"
+    static let lifetime: OTPLifetime = .tenMinutes
 
     enum Purpose: String, Sendable {
         case login
@@ -72,7 +73,4 @@ final class EmailMFAChallenge: Model, @unchecked Sendable {
         get { Method(rawValue: methodRawValueStorage ?? Method.email.rawValue) ?? .email }
         set { methodRawValueStorage = newValue.rawValue }
     }
-
-    var isExpired: Bool { expiresAt < Date() }
-    var isValid: Bool { !isUsed && !isExpired }
 }

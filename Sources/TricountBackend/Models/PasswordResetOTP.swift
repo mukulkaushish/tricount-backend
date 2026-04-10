@@ -1,8 +1,9 @@
 import Fluent
 import Foundation
 
-final class PasswordResetOTP: Model, @unchecked Sendable {
+final class PasswordResetOTP: Model, ExpiringRecord, @unchecked Sendable {
     static let schema = "password_reset_otps"
+    static let lifetime: OTPLifetime = .tenMinutes
 
     @ID(key: .id)
     var id: UUID?
@@ -42,7 +43,4 @@ final class PasswordResetOTP: Model, @unchecked Sendable {
         self.expiresAt = expiresAt
         self.isUsed = isUsed
     }
-
-    var isExpired: Bool { expiresAt < Date() }
-    var isValid: Bool { !isUsed && !isExpired }
 }

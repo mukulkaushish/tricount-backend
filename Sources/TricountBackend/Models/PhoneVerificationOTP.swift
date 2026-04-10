@@ -1,8 +1,9 @@
 import Fluent
 import Foundation
 
-final class PhoneVerificationOTP: Model, @unchecked Sendable {
+final class PhoneVerificationOTP: Model, ExpiringRecord, @unchecked Sendable {
     static let schema = "phone_verification_otps"
+    static let lifetime: OTPLifetime = .tenMinutes
 
     @ID(key: .id)
     var id: UUID?
@@ -42,7 +43,4 @@ final class PhoneVerificationOTP: Model, @unchecked Sendable {
         self.expiresAt = expiresAt
         self.isUsed = isUsed
     }
-
-    var isExpired: Bool { expiresAt < Date() }
-    var isValid: Bool { !isUsed && !isExpired }
 }
