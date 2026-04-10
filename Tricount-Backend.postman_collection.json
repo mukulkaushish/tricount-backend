@@ -1,0 +1,478 @@
+{
+	"info": {
+		"name": "Tricount Backend",
+		"description": "Complete API collection for Tricount Backend.\n\nTokens are auto-extracted from Login, Register, Refresh, and MFA verify responses.\n\nSet `email` and `password` variables before running.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{ "key": "baseUrl", "value": "http://localhost:8080", "type": "string" },
+		{ "key": "accessToken", "value": "", "type": "string" },
+		{ "key": "refreshToken", "value": "", "type": "string" },
+		{ "key": "challengeToken", "value": "", "type": "string" },
+		{ "key": "email", "value": "test@example.com", "type": "string" },
+		{ "key": "password", "value": "Test1234", "type": "string" },
+		{ "key": "displayName", "value": "Test User", "type": "string" }
+	],
+	"auth": {
+		"type": "bearer",
+		"bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+	},
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [""]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// Auto-extract tokens from any response that contains them",
+					"if (pm.response.code >= 200 && pm.response.code < 300) {",
+					"    try {",
+					"        var json = pm.response.json();",
+					"        // Handle wrapped responses: { data: { ... } }",
+					"        var body = json.data ? json.data : json;",
+					"        if (body.accessToken) {",
+					"            pm.collectionVariables.set('accessToken', body.accessToken);",
+					"            console.log('accessToken saved');",
+					"        }",
+					"        if (body.refreshToken) {",
+					"            pm.collectionVariables.set('refreshToken', body.refreshToken);",
+					"            console.log('refreshToken saved');",
+					"        }",
+					"        if (body.mfaChallenge && body.mfaChallenge.challengeToken) {",
+					"            pm.collectionVariables.set('challengeToken', body.mfaChallenge.challengeToken);",
+					"            console.log('challengeToken saved');",
+					"        }",
+					"    } catch(e) {}",
+					"}"
+				]
+			}
+		}
+	],
+	"item": [
+		{
+			"name": "Health",
+			"item": [
+				{
+					"name": "Health Check",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "GET",
+						"url": { "raw": "{{baseUrl}}/", "host": ["{{baseUrl}}"], "path": [""] }
+					}
+				}
+			]
+		},
+		{
+			"name": "Auth - Public",
+			"item": [
+				{
+					"name": "Register",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', () => pm.response.to.have.status(201));"
+								]
+							}
+						}
+					],
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"displayName\": \"{{displayName}}\"\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/v1/auth/register", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "register"] }
+					}
+				},
+				{
+					"name": "Login",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', () => pm.response.to.have.status(200));"
+								]
+							}
+						}
+					],
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/v1/auth/login", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "login"] }
+					}
+				},
+				{
+					"name": "Google Sign-In",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"idToken\": \"GOOGLE_ID_TOKEN_HERE\"\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/v1/auth/google", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "google"] }
+					}
+				},
+				{
+					"name": "Apple Sign-In",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"idToken\": \"APPLE_ID_TOKEN_HERE\"\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/v1/auth/apple", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "apple"] }
+					}
+				},
+				{
+					"name": "Forgot Password",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{email}}\"\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/v1/auth/forgot-password", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "forgot-password"] }
+					}
+				},
+				{
+					"name": "Reset Password",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{email}}\",\n  \"code\": \"123456\",\n  \"newPassword\": \"NewPass1234\"\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/v1/auth/reset-password", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "reset-password"] }
+					}
+				},
+				{
+					"name": "Refresh Token",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/v1/auth/refresh", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "refresh"] }
+					}
+				}
+			]
+		},
+		{
+			"name": "Auth - MFA",
+			"item": [
+				{
+					"name": "Verify Email MFA Login",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"challengeToken\": \"{{challengeToken}}\",\n  \"code\": \"123456\"\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/v1/auth/mfa/email/verify", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "mfa", "email", "verify"] }
+					}
+				},
+				{
+					"name": "Verify Authenticator App MFA Login",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"challengeToken\": \"{{challengeToken}}\",\n  \"code\": \"123456\"\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/v1/auth/mfa/authenticator-app/verify", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "mfa", "authenticator-app", "verify"] }
+					}
+				}
+			]
+		},
+		{
+			"name": "Auth - Passkeys (Public)",
+			"item": [
+				{
+					"name": "Begin Passkey Authentication",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{email}}\"\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/v1/auth/passkeys/authenticate/options", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "passkeys", "authenticate", "options"] }
+					}
+				},
+				{
+					"name": "Finish Passkey Authentication",
+					"request": {
+						"auth": { "type": "noauth" },
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"id\": \"credential-id\",\n  \"rawId\": \"base64url-raw-id\",\n  \"type\": \"public-key\",\n  \"response\": {\n    \"clientDataJSON\": \"base64url-encoded\",\n    \"authenticatorData\": \"base64url-encoded\",\n    \"signature\": \"base64url-encoded\",\n    \"userHandle\": \"base64url-encoded\"\n  }\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/v1/auth/passkeys/authenticate/verify", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "passkeys", "authenticate", "verify"] }
+					}
+				}
+			]
+		},
+		{
+			"name": "User Profile",
+			"item": [
+				{
+					"name": "Get Me",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', () => pm.response.to.have.status(200));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"url": { "raw": "{{baseUrl}}/v1/auth/me", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "me"] }
+					}
+				},
+				{
+					"name": "Verify Google Profile",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"idToken\": \"GOOGLE_ID_TOKEN_HERE\"\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/v1/auth/verify-profile/google", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "verify-profile", "google"] }
+					}
+				},
+				{
+					"name": "Verify Apple Profile",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"idToken\": \"APPLE_ID_TOKEN_HERE\"\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/v1/auth/verify-profile/apple", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "verify-profile", "apple"] }
+					}
+				},
+				{
+					"name": "Logout",
+					"request": {
+						"method": "POST",
+						"url": { "raw": "{{baseUrl}}/v1/auth/logout", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "logout"] }
+					}
+				}
+			]
+		},
+		{
+			"name": "Email Verification",
+			"item": [
+				{
+					"name": "Request Email Verification OTP",
+					"request": {
+						"method": "POST",
+						"url": { "raw": "{{baseUrl}}/v1/auth/verify-profile/email/request-otp", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "verify-profile", "email", "request-otp"] }
+					}
+				},
+				{
+					"name": "Confirm Email Verification OTP",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"123456\"\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/v1/auth/verify-profile/email/confirm", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "verify-profile", "email", "confirm"] }
+					}
+				}
+			]
+		},
+		{
+			"name": "MFA - Email",
+			"item": [
+				{
+					"name": "Enable Email MFA",
+					"request": {
+						"method": "POST",
+						"url": { "raw": "{{baseUrl}}/v1/auth/mfa/email/enable", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "mfa", "email", "enable"] }
+					}
+				},
+				{
+					"name": "Confirm Email MFA Enable",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"123456\"\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/v1/auth/mfa/email/confirm-enable", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "mfa", "email", "confirm-enable"] }
+					}
+				},
+				{
+					"name": "Disable Email MFA",
+					"request": {
+						"method": "POST",
+						"url": { "raw": "{{baseUrl}}/v1/auth/mfa/email/disable", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "mfa", "email", "disable"] }
+					}
+				}
+			]
+		},
+		{
+			"name": "MFA - Authenticator App",
+			"item": [
+				{
+					"name": "Setup Authenticator App",
+					"request": {
+						"method": "POST",
+						"url": { "raw": "{{baseUrl}}/v1/auth/mfa/authenticator-app/setup", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "mfa", "authenticator-app", "setup"] }
+					}
+				},
+				{
+					"name": "Confirm Authenticator App Enable",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"123456\"\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/v1/auth/mfa/authenticator-app/confirm-enable", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "mfa", "authenticator-app", "confirm-enable"] }
+					}
+				},
+				{
+					"name": "Disable Authenticator App MFA",
+					"request": {
+						"method": "POST",
+						"url": { "raw": "{{baseUrl}}/v1/auth/mfa/authenticator-app/disable", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "mfa", "authenticator-app", "disable"] }
+					}
+				}
+			]
+		},
+		{
+			"name": "Phone Verification",
+			"item": [
+				{
+					"name": "Request Phone Verification",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"phoneNumber\": \"+1234567890\"\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/v1/auth/phone/request-verification", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "phone", "request-verification"] }
+					}
+				},
+				{
+					"name": "Confirm Phone Verification",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"123456\"\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/v1/auth/phone/confirm-verification", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "phone", "confirm-verification"] }
+					}
+				},
+				{
+					"name": "Remove Phone Number",
+					"request": {
+						"method": "POST",
+						"url": { "raw": "{{baseUrl}}/v1/auth/phone/remove", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "phone", "remove"] }
+					}
+				}
+			]
+		},
+		{
+			"name": "Passkeys (Protected)",
+			"item": [
+				{
+					"name": "List Passkeys",
+					"request": {
+						"method": "GET",
+						"url": { "raw": "{{baseUrl}}/v1/auth/passkeys", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "passkeys"] }
+					}
+				},
+				{
+					"name": "Begin Passkey Registration",
+					"request": {
+						"method": "POST",
+						"url": { "raw": "{{baseUrl}}/v1/auth/passkeys/register/options", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "passkeys", "register", "options"] }
+					}
+				},
+				{
+					"name": "Finish Passkey Registration",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"id\": \"credential-id\",\n  \"rawId\": \"base64url-raw-id\",\n  \"type\": \"public-key\",\n  \"response\": {\n    \"clientDataJSON\": \"base64url-encoded\",\n    \"attestationObject\": \"base64url-encoded\",\n    \"transports\": [\"internal\"]\n  }\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/v1/auth/passkeys/register/verify", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "passkeys", "register", "verify"] }
+					}
+				},
+				{
+					"name": "Remove Passkey",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"credentialId\": \"credential-id-here\"\n}"
+						},
+						"url": { "raw": "{{baseUrl}}/v1/auth/passkeys/remove", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "passkeys", "remove"] }
+					}
+				},
+				{
+					"name": "Reset All Passkeys",
+					"request": {
+						"method": "POST",
+						"url": { "raw": "{{baseUrl}}/v1/auth/passkeys/reset", "host": ["{{baseUrl}}"], "path": ["v1", "auth", "passkeys", "reset"] }
+					}
+				}
+			]
+		}
+	]
+}
