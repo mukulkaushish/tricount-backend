@@ -147,7 +147,7 @@ struct AuthService {
         return TokenRefreshResponse(
             accessToken: newAccess,
             refreshToken: newRefresh,
-            expiresIn: 3600
+            expiresIn: Int(TokenLifetime.accessToken)
         )
     }
 
