@@ -37,6 +37,7 @@ swift run
 | `GOOGLE_CLIENT_ID` | — | Optional Google OAuth audience check |
 | `APPLE_APPLICATION_IDENTIFIER` | — | Optional Sign in with Apple audience check (`client_id` / bundle id) |
 | `APPLE_BUNDLE_ID` | — | Alias for `APPLE_APPLICATION_IDENTIFIER` |
+| `AUTH_EXPOSE_DEBUG_OTP` | `false` | When set to `true` outside production, OTP request/login responses may include `debugCode` for local development/testing |
 | `LOG_LEVEL` | `info` | Vapor log level (`debug`, `info`, `warning`, `error`) |
 
 ---

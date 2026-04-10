@@ -176,7 +176,8 @@ struct AuthService {
               user.passwordHash != nil
         else {
             return MessageResponse(
-                message: "If the account exists, a password reset link will be sent."
+                message: "If the account exists, a password reset link will be sent.",
+                debugCode: nil
             )
         }
 
@@ -885,7 +886,15 @@ struct AuthService {
     }
 
     private func debugOTPCode(_ code: String) -> String? {
-        req.isProductionEnvironment ? nil : code
+        guard !req.isProductionEnvironment else {
+            return nil
+        }
+
+        let exposeDebugOTP = ProcessInfo.processInfo.environment["AUTH_EXPOSE_DEBUG_OTP"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() == "true"
+
+        return exposeDebugOTP ? code : nil
     }
 
     private func validMFALoginChallenge(
