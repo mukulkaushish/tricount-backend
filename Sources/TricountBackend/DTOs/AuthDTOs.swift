@@ -171,8 +171,3 @@ struct ErrorResponse: Content {
     let statusCode: Int
 }
 
-// MARK: - Standard wrappers
-
-struct DataResponse<T: Content>: Content {
-    let data: T
-}

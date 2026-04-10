@@ -37,7 +37,7 @@ extension Response {
     ) throws -> Response {
         let response = Response(status: status)
         response.headers.contentType = .json
-        try response.content.encode(DataResponse(data: value))
+        try response.content.encode(value)
         return response
     }
 

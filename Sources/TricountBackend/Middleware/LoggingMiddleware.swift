@@ -150,7 +150,9 @@ struct LoggingMiddleware: AsyncMiddleware {
 
         if let policy = request.rateLimitPolicy, !policy.isDisabled {
             parts.append("\"rateLimit\":\"\(policy.identifier)\"")
-            parts.append("\"rateLimitMax\":\(policy.limit)")
+            if let attempt = request.rateLimitAttempt {
+                parts.append("\"rateLimitAttempt\":\"\(attempt)/\(policy.limit)\"")
+            }
             if let retryAfter {
                 parts.append("\"retryAfter\":\(retryAfter)")
             }

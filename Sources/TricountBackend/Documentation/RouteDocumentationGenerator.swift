@@ -49,7 +49,7 @@ struct RouteDocumentationGenerator {
                     "if (pm.response.code >= 200 && pm.response.code < 300) {",
                     "    try {",
                     "        var json = pm.response.json();",
-                    "        var body = json.data ? json.data : json;",
+                    "        var body = json;",
                     "        if (body.accessToken) {",
                     "            pm.collectionVariables.set('accessToken', body.accessToken);",
                     "        }",
@@ -360,7 +360,6 @@ struct RouteDocumentationGenerator {
                 if let typeName = route.successResponse.typeName {
                     lines.append("- Type: \(typeName)")
                 }
-                lines.append("- Envelope: \(route.successResponse.envelope)")
                 lines.append("")
                 lines.append(contentsOf: makeFieldTableLines(for: successSchema))
             }
@@ -554,8 +553,8 @@ struct RouteDocumentationGenerator {
             h += "<span class=\"detail-icon res\">&#x2193;</span> Response <span class=\"status-code\">\(route.successResponse.statusCode)</span></div>\n"
             h += "<div class=\"detail-meta\">"
             if let ct = route.successResponse.contentType { h += "<code>\(escapeHTML(ct))</code> &middot; " }
-            if let tn = route.successResponse.typeName { h += "<code>\(escapeHTML(tn))</code> &middot; " }
-            h += "Envelope: <code>\(escapeHTML(route.successResponse.envelope))</code></div>\n"
+            if let tn = route.successResponse.typeName { h += "<code>\(escapeHTML(tn))</code>" }
+            h += "</div>\n"
             h += fieldTable(for: ss) + "</div>\n"
         }
         if !route.errors.isEmpty {
@@ -1192,9 +1191,7 @@ private struct RouteDocumentationSuccessResponseEntry {
         case .empty:
             self.summary = "\(response.statusCode) no-content"
         case .raw:
-            self.summary = "\(response.statusCode) raw<\(response.typeName ?? "unknown")>"
-        case .data:
-            self.summary = "\(response.statusCode) data<\(response.typeName ?? "unknown")>"
+            self.summary = "\(response.statusCode) \(response.typeName ?? "unknown")"
         }
     }
 

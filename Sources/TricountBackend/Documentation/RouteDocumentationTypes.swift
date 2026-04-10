@@ -8,7 +8,6 @@ enum RouteDocumentationAuth: String, Sendable {
 
 enum RouteDocumentationEnvelope: String, Sendable {
     case raw
-    case data
     case empty
 }
 
@@ -43,8 +42,6 @@ struct RouteDocumentationResponse: Sendable {
         switch envelope {
         case .raw:
             payloadSchema
-        case .data:
-            payloadSchema.map(DocumentationSchema.dataEnvelope)
         case .empty:
             nil
         }
@@ -59,19 +56,6 @@ struct RouteDocumentationResponse: Sendable {
             contentType: "application/json",
             typeName: prettyDocumentationTypeName(type),
             envelope: .raw,
-            payloadSchema: DocumentationSchemaFactory.make(for: type)
-        )
-    }
-
-    static func data<Body: Content>(
-        _ type: Body.Type = Body.self,
-        status: HTTPStatus = .ok
-    ) -> RouteDocumentationResponse {
-        RouteDocumentationResponse(
-            statusCode: Int(status.code),
-            contentType: "application/json",
-            typeName: prettyDocumentationTypeName(type),
-            envelope: .data,
             payloadSchema: DocumentationSchemaFactory.make(for: type)
         )
     }
@@ -103,12 +87,6 @@ indirect enum DocumentationSchema: Sendable {
     case dictionary(values: DocumentationSchema, nullable: Bool = false)
     case object(properties: [DocumentationProperty], nullable: Bool = false)
     case unknown(typeName: String, nullable: Bool = false)
-
-    static func dataEnvelope(_ payload: DocumentationSchema) -> DocumentationSchema {
-        .object(properties: [
-            DocumentationProperty(name: "data", schema: payload, required: true)
-        ])
-    }
 
     func nullable() -> DocumentationSchema {
         switch self {
