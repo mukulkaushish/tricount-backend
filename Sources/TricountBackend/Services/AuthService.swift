@@ -165,7 +165,7 @@ struct AuthService {
 
     // MARK: - Forgot Password
 
-    func forgotPassword(dto: ForgotPasswordRequest) async throws {
+    func forgotPassword(dto: ForgotPasswordRequest) async throws -> MessageResponse {
         let email = AuthValidation.normalizeEmail(dto.email)
         req.logger.info("Password reset requested", metadata: ["email": .string(email)])
 
@@ -175,7 +175,9 @@ struct AuthService {
             .first(),
               user.passwordHash != nil
         else {
-            return
+            return MessageResponse(
+                message: "If the account exists, a password reset link will be sent."
+            )
         }
 
         let code = try await replacePasswordResetOTP(for: user)
@@ -183,6 +185,11 @@ struct AuthService {
             to: user.email,
             code: code,
             displayName: user.displayName
+        )
+
+        return MessageResponse(
+            message: "If the account exists, a password reset link will be sent.",
+            debugCode: debugOTPCode(code)
         )
     }
 
@@ -254,7 +261,10 @@ struct AuthService {
             displayName: user.displayName
         )
 
-        return MessageResponse(message: "Verification code sent to \(user.email).")
+        return MessageResponse(
+            message: "Verification code sent to \(user.email).",
+            debugCode: debugOTPCode(code)
+        )
     }
 
     func confirmEmailVerificationOTP(dto: VerifyEmailOTPRequest) async throws -> UserDTO {
@@ -310,7 +320,10 @@ struct AuthService {
             displayName: user.displayName
         )
 
-        return MessageResponse(message: "MFA enable code sent to \(user.email).")
+        return MessageResponse(
+            message: "MFA enable code sent to \(user.email).",
+            debugCode: debugOTPCode(code)
+        )
     }
 
     func confirmEmailMFAEnable(dto: ConfirmEmailMFAEnableRequest) async throws -> UserDTO {
@@ -505,7 +518,10 @@ struct AuthService {
         let code = try await replacePhoneVerificationOTP(for: user, phoneNumber: normalizedPhone)
         try await req.authSMSDispatcher.sendPhoneVerificationOTP(to: normalizedPhone, code: code)
 
-        return MessageResponse(message: "Verification code sent to \(normalizedPhone).")
+        return MessageResponse(
+            message: "Verification code sent to \(normalizedPhone).",
+            debugCode: debugOTPCode(code)
+        )
     }
 
     func confirmPhoneVerification(dto: ConfirmPhoneVerificationRequest) async throws -> UserDTO {
@@ -834,9 +850,10 @@ struct AuthService {
         )
 
         return MFAChallengeResponse(
-            method: "email",
+            method: EmailMFAChallenge.Method.email.rawValue,
             challengeToken: challengeToken,
-            expiresIn: Int(EmailMFAChallenge.lifetime.interval)
+            expiresIn: Int(EmailMFAChallenge.lifetime.interval),
+            debugCode: debugOTPCode(code)
         )
     }
 
@@ -865,6 +882,10 @@ struct AuthService {
             challengeToken: challengeToken,
             expiresIn: Int(EmailMFAChallenge.lifetime.interval)
         )
+    }
+
+    private func debugOTPCode(_ code: String) -> String? {
+        req.isProductionEnvironment ? nil : code
     }
 
     private func validMFALoginChallenge(

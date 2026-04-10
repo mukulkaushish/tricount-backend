@@ -74,8 +74,7 @@ struct AuthController: RouteCollection {
         guard AuthValidation.isValidEmail(normalizedEmail) else {
             throw Abort(.badRequest, reason: "Invalid email format")
         }
-        try await req.authService.forgotPassword(dto: body)
-        return MessageResponse(message: "If the account exists, a password reset link will be sent.")
+        return try await req.authService.forgotPassword(dto: body)
     }
 
     @Sendable

@@ -108,6 +108,14 @@ struct MFAChallengeResponse: Content {
     let method: String
     let challengeToken: String?
     let expiresIn: Int?
+    let debugCode: String?
+
+    init(method: String, challengeToken: String?, expiresIn: Int?, debugCode: String? = nil) {
+        self.method = method
+        self.challengeToken = challengeToken
+        self.expiresIn = expiresIn
+        self.debugCode = debugCode
+    }
 }
 
 struct AuthenticationResultResponse: Content {
@@ -156,6 +164,12 @@ struct TokenRefreshResponse: Content {
 
 struct MessageResponse: Content {
     let message: String
+    let debugCode: String?
+
+    init(message: String, debugCode: String? = nil) {
+        self.message = message
+        self.debugCode = debugCode
+    }
 }
 
 struct HealthCheckResponse: Content {
@@ -170,4 +184,3 @@ struct ErrorResponse: Content {
     let message: String
     let statusCode: Int
 }
-
