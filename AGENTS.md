@@ -33,7 +33,7 @@ swift run
 | `MYSQL_USERNAME` | `tricount` | MySQL username |
 | `MYSQL_PASSWORD` | `tricount` | MySQL password |
 | `MYSQL_DATABASE` | `tricount` | MySQL database name |
-| `ROUTE_DOCS_OUTPUT_DIR` | `Generated` locally / `.build/generated-route-docs` in tests | Output directory for the startup-generated `routes.json` and `routes.md` files |
+| `ROUTE_DOCS_OUTPUT_DIR` | `Generated` locally / `.build/generated-route-docs` in tests | Output directory for the startup-generated `routes.md` and Postman collection files |
 | `GOOGLE_CLIENT_ID` | — | Optional Google OAuth audience check |
 | `APPLE_APPLICATION_IDENTIFIER` | — | Optional Sign in with Apple audience check (`client_id` / bundle id) |
 | `APPLE_BUNDLE_ID` | — | Alias for `APPLE_APPLICATION_IDENTIFIER` |
@@ -62,10 +62,9 @@ Sources/TricountBackend/
 │
 ├── DTOs/
 │   ├── AuthDTOs.swift       # Request & response Codable structs
-│   └── TodoDTOs.swift       # Separate todo request/response DTOs
 │
 ├── Documentation/
-│   └── RouteDocumentationGenerator.swift # Writes startup-generated routes.json/routes.md
+│   └── RouteDocumentationGenerator.swift # Writes startup-generated routes.md, Postman collection, and HTML docs
 │
 ├── Middleware/
 │   ├── ErrorMiddleware.swift      # Global: all errors → standard JSON shape

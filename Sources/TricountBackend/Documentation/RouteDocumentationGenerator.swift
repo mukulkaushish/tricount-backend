@@ -16,21 +16,211 @@ struct RouteDocumentationGenerator {
         )
 
         let snapshot = makeSnapshot()
-        let jsonURL = outputDirectory.appendingPathComponent("routes.json")
-        let markdownURL = outputDirectory.appendingPathComponent("routes.md")
-
-        let jsonData = try JSONSerialization.data(
-            withJSONObject: snapshot.jsonObject,
-            options: [.prettyPrinted, .sortedKeys]
-        )
-        try jsonData.write(to: jsonURL, options: .atomic)
 
         let markdown = renderMarkdown(for: snapshot)
+        let markdownURL = outputDirectory.appendingPathComponent("routes.md")
         try markdown.write(to: markdownURL, atomically: true, encoding: .utf8)
 
         let html = renderHTML(for: snapshot)
         let htmlURL = outputDirectory.appendingPathComponent("index.html")
         try html.write(to: htmlURL, atomically: true, encoding: .utf8)
+
+        let postman = renderPostmanCollection(for: snapshot)
+        let postmanData = try JSONSerialization.data(
+            withJSONObject: postman,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+        let postmanURL = outputDirectory.appendingPathComponent("Tricount-Backend.postman_collection.json")
+        try postmanData.write(to: postmanURL, options: .atomic)
+    }
+
+    // MARK: - Postman Collection v2.1
+
+    private func renderPostmanCollection(for snapshot: RouteDocumentationSnapshot) -> [String: Any] {
+        // Group routes by path prefix for folder organization
+        let groups = routeGroups(from: snapshot.routes)
+
+        // Token extraction script (collection-level test)
+        let tokenScript: [String: Any] = [
+            "listen": "test",
+            "script": [
+                "type": "text/javascript",
+                "exec": [
+                    "if (pm.response.code >= 200 && pm.response.code < 300) {",
+                    "    try {",
+                    "        var json = pm.response.json();",
+                    "        var body = json.data ? json.data : json;",
+                    "        if (body.accessToken) {",
+                    "            pm.collectionVariables.set('accessToken', body.accessToken);",
+                    "        }",
+                    "        if (body.refreshToken) {",
+                    "            pm.collectionVariables.set('refreshToken', body.refreshToken);",
+                    "        }",
+                    "        if (body.mfaChallenge && body.mfaChallenge.challengeToken) {",
+                    "            pm.collectionVariables.set('challengeToken', body.mfaChallenge.challengeToken);",
+                    "        }",
+                    "    } catch(e) {}",
+                    "}"
+                ]
+            ] as [String: Any]
+        ]
+
+        let folders: [[String: Any]] = groups.map { group in
+            let items: [[String: Any]] = group.routes.map { route in
+                postmanItem(for: route)
+            }
+            return [
+                "name": group.title,
+                "item": items
+            ]
+        }
+
+        return [
+            "info": [
+                "name": "Tricount Backend",
+                "description": "Auto-generated from registered Vapor routes at startup.\nTokens auto-extracted from auth responses.",
+                "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+            ] as [String: Any],
+            "variable": [
+                ["key": "baseUrl", "value": "http://localhost:8080", "type": "string"],
+                ["key": "accessToken", "value": "", "type": "string"],
+                ["key": "refreshToken", "value": "", "type": "string"],
+                ["key": "challengeToken", "value": "", "type": "string"],
+                ["key": "email", "value": "test@example.com", "type": "string"],
+                ["key": "password", "value": "Test1234", "type": "string"],
+                ["key": "displayName", "value": "Test User", "type": "string"],
+                ["key": "otpCode", "value": "123456", "type": "string"],
+                ["key": "idToken", "value": "", "type": "string"],
+                ["key": "phoneNumber", "value": "+1234567890", "type": "string"],
+                ["key": "credentialId", "value": "", "type": "string"]
+            ],
+            "auth": [
+                "type": "bearer",
+                "bearer": [["key": "token", "value": "{{accessToken}}", "type": "string"]]
+            ] as [String: Any],
+            "event": [tokenScript],
+            "item": folders
+        ]
+    }
+
+    private func postmanItem(for route: RouteDocumentationEntry) -> [String: Any] {
+        let pathComponents = route.path
+            .split(separator: "/")
+            .map(String.init)
+
+        let name = postmanRequestName(method: route.method, path: route.path)
+        let needsAuth = route.auth == "bearer"
+
+        var request: [String: Any] = [
+            "method": route.method,
+            "url": [
+                "raw": "{{baseUrl}}\(route.path)",
+                "host": ["{{baseUrl}}"],
+                "path": pathComponents
+            ] as [String: Any]
+        ]
+
+        if !needsAuth {
+            request["auth"] = ["type": "noauth"]
+        }
+
+        if let body = route.requestBody {
+            request["header"] = [["key": "Content-Type", "value": "application/json"]]
+            let sampleBody = postmanSampleBody(for: body.schema)
+            if let jsonData = try? JSONSerialization.data(withJSONObject: sampleBody, options: [.prettyPrinted, .sortedKeys]),
+               let jsonString = String(data: jsonData, encoding: .utf8) {
+                request["body"] = [
+                    "mode": "raw",
+                    "raw": jsonString
+                ] as [String: Any]
+            }
+        }
+
+        var item: [String: Any] = [
+            "name": name,
+            "request": request
+        ]
+
+        // Add status test
+        let statusCode = route.successResponse.statusCode
+        item["event"] = [[
+            "listen": "test",
+            "script": [
+                "type": "text/javascript",
+                "exec": ["pm.test('Status is \(statusCode)', () => pm.response.to.have.status(\(statusCode)));"]
+            ] as [String: Any]
+        ]]
+
+        return item
+    }
+
+    private func postmanRequestName(method: String, path: String) -> String {
+        let segments = path
+            .split(separator: "/")
+            .filter { $0 != "v1" && $0 != "auth" }
+
+        if segments.isEmpty {
+            return "\(method) /"
+        }
+
+        return segments
+            .map { segment in
+                segment.split(separator: "-")
+                    .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+                    .joined(separator: " ")
+            }
+            .joined(separator: " > ")
+    }
+
+    private func postmanSampleBody(for schema: DocumentationSchema) -> [String: Any] {
+        switch schema {
+        case .object(let properties, _):
+            var body: [String: Any] = [:]
+            for property in properties {
+                body[property.name] = postmanSampleValue(for: property.name, schema: property.schema)
+            }
+            return body
+        default:
+            return [:]
+        }
+    }
+
+    private func postmanSampleValue(for name: String, schema: DocumentationSchema) -> Any {
+        // Use collection variables for known fields
+        switch name {
+        case "email": return "{{email}}"
+        case "password": return "{{password}}"
+        case "displayName": return "{{displayName}}"
+        case "refreshToken": return "{{refreshToken}}"
+        case "challengeToken": return "{{challengeToken}}"
+        case "idToken": return "{{idToken}}"
+        case "code": return "{{otpCode}}"
+        case "newPassword": return "NewPass1234"
+        case "phoneNumber": return "{{phoneNumber}}"
+        case "credentialId": return "{{credentialId}}"
+        default: break
+        }
+
+        switch schema {
+        case .string(let format, _):
+            switch format {
+            case "uuid": return "00000000-0000-0000-0000-000000000000"
+            case "uri": return "https://example.com"
+            case "date-time": return "2026-01-01T00:00:00Z"
+            default: return ""
+            }
+        case .integer: return 0
+        case .number: return 0.0
+        case .boolean: return false
+        case .array: return [] as [Any]
+        case .object(let properties, _):
+            var nested: [String: Any] = [:]
+            for property in properties {
+                nested[property.name] = postmanSampleValue(for: property.name, schema: property.schema)
+            }
+            return nested
+        default: return ""
+        }
     }
 
     private func makeSnapshot() -> RouteDocumentationSnapshot {
@@ -272,7 +462,8 @@ struct RouteDocumentationGenerator {
         // Hero
         html += "<div class=\"hero\">\n"
         html += "  <h1>API Reference</h1>\n"
-        html += "  <p class=\"hero-sub\">Complete endpoint documentation for <strong>tricount-backend</strong></p>\n"
+        html += "  <p class=\"hero-sub\">Complete endpoint documentation for <strong>tricount-backend</strong>"
+        html += " &middot; <a class=\"postman-link\" href=\"/docs/Tricount-Backend.postman_collection.json\" download>Download Postman Collection</a></p>\n"
         html += "  <div class=\"hero-stats\">\n"
         html += "    <div class=\"stat-card\"><div class=\"stat-value\">\(snapshot.routeCount)</div><div class=\"stat-label\">Endpoints</div></div>\n"
         html += "    <div class=\"stat-card\"><div class=\"stat-value\">\(snapshot.schemas.count)</div><div class=\"stat-label\">Schemas</div></div>\n"
@@ -280,24 +471,25 @@ struct RouteDocumentationGenerator {
         html += "  </div>\n"
         html += "</div>\n"
 
-        // --- Environment Variables Legend (Hoppscotch <<variable>> syntax) ---
+        // --- Environment Variables Legend (Postman {{variable}} syntax) ---
         html += "<div class=\"env-legend\">\n"
         html += "  <div class=\"env-legend-title\">"
         html += "<svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z\"/></svg>"
-        html += " Environment Variables <span class=\"env-hint\">(Hoppscotch &lt;&lt;variable&gt;&gt; syntax \u{2014} copy &amp; paste directly)</span></div>\n"
+        html += " Environment Variables <span class=\"env-hint\">(Postman {{variable}} syntax \u{2014} copy &amp; paste directly)</span></div>\n"
         html += "  <table class=\"env-table\">\n"
         html += "    <thead><tr><th>Variable</th><th>Description</th><th>Default</th></tr></thead>\n"
         html += "    <tbody>\n"
-        html += "    <tr><td><code>&lt;&lt;baseURL&gt;&gt;</code></td><td>API base URL</td><td class=\"env-default\">http://127.0.0.1:8080</td></tr>\n"
-        html += "    <tr><td><code>&lt;&lt;accessToken&gt;&gt;</code></td><td>JWT access token from login/register</td><td class=\"env-default\">\u{2014}</td></tr>\n"
-        html += "    <tr><td><code>&lt;&lt;refreshToken&gt;&gt;</code></td><td>Refresh token from login/register</td><td class=\"env-default\">\u{2014}</td></tr>\n"
-        html += "    <tr><td><code>&lt;&lt;userEmail&gt;&gt;</code></td><td>Test user email</td><td class=\"env-default\">user@example.com</td></tr>\n"
-        html += "    <tr><td><code>&lt;&lt;userPassword&gt;&gt;</code></td><td>Test user password</td><td class=\"env-default\">Password1</td></tr>\n"
-        html += "    <tr><td><code>&lt;&lt;challengeToken&gt;&gt;</code></td><td>MFA challenge token from login response</td><td class=\"env-default\">\u{2014}</td></tr>\n"
-        html += "    <tr><td><code>&lt;&lt;otpCode&gt;&gt;</code></td><td>6-digit OTP code from email/SMS</td><td class=\"env-default\">\u{2014}</td></tr>\n"
-        html += "    <tr><td><code>&lt;&lt;idToken&gt;&gt;</code></td><td>Google/Apple OAuth ID token</td><td class=\"env-default\">\u{2014}</td></tr>\n"
-        html += "    <tr><td><code>&lt;&lt;displayName&gt;&gt;</code></td><td>User display name</td><td class=\"env-default\">Test User</td></tr>\n"
-        html += "    <tr><td><code>&lt;&lt;phoneNumber&gt;&gt;</code></td><td>Phone in E.164 format</td><td class=\"env-default\">+919876543210</td></tr>\n"
+        html += "    <tr><td><code>{{baseUrl}}</code></td><td>API base URL</td><td class=\"env-default\">http://localhost:8080</td></tr>\n"
+        html += "    <tr><td><code>{{accessToken}}</code></td><td>JWT access token (auto-saved from login/register)</td><td class=\"env-default\">\u{2014}</td></tr>\n"
+        html += "    <tr><td><code>{{refreshToken}}</code></td><td>Refresh token (auto-saved from login/register)</td><td class=\"env-default\">\u{2014}</td></tr>\n"
+        html += "    <tr><td><code>{{email}}</code></td><td>Test user email</td><td class=\"env-default\">test@example.com</td></tr>\n"
+        html += "    <tr><td><code>{{password}}</code></td><td>Test user password</td><td class=\"env-default\">Test1234</td></tr>\n"
+        html += "    <tr><td><code>{{challengeToken}}</code></td><td>MFA challenge token (auto-saved from login)</td><td class=\"env-default\">\u{2014}</td></tr>\n"
+        html += "    <tr><td><code>{{otpCode}}</code></td><td>6-digit OTP code from email/SMS</td><td class=\"env-default\">\u{2014}</td></tr>\n"
+        html += "    <tr><td><code>{{idToken}}</code></td><td>Google/Apple OAuth ID token</td><td class=\"env-default\">\u{2014}</td></tr>\n"
+        html += "    <tr><td><code>{{displayName}}</code></td><td>User display name</td><td class=\"env-default\">Test User</td></tr>\n"
+        html += "    <tr><td><code>{{phoneNumber}}</code></td><td>Phone in E.164 format</td><td class=\"env-default\">+1234567890</td></tr>\n"
+        html += "    <tr><td><code>{{credentialId}}</code></td><td>Passkey credential ID</td><td class=\"env-default\">\u{2014}</td></tr>\n"
         html += "    </tbody>\n"
         html += "  </table>\n"
         html += "</div>\n"
@@ -397,10 +589,10 @@ struct RouteDocumentationGenerator {
     }
 
     private func curlExample(for route: RouteDocumentationEntry) -> String {
-        var parts: [String] = ["curl -X \(route.method) \"<<baseURL>>\(route.path)\""]
+        var parts: [String] = ["curl -X \(route.method) \"{{baseUrl}}\(route.path)\""]
         parts.append("  -H \"Content-Type: application/json\"")
         if route.auth == "bearer" {
-            parts.append("  -H \"Authorization: Bearer <<accessToken>>\"")
+            parts.append("  -H \"Authorization: Bearer {{accessToken}}\"")
         }
         if let rb = route.requestBody {
             let sampleBody = sampleJSON(for: rb.schema, indent: 4)
@@ -426,19 +618,19 @@ struct RouteDocumentationGenerator {
     }
 
     private func sampleValue(for type: String, fieldName: String = "") -> String {
-        // Map well-known field names to Hoppscotch <<variable>> syntax
+        // Map well-known field names to Postman {{variable}} syntax
         let name = fieldName.lowercased()
         switch name {
-        case "email":                           return "\"<<userEmail>>\""
-        case "password", "newpassword":         return "\"<<userPassword>>\""
-        case "idtoken":                         return "\"<<idToken>>\""
-        case "refreshtoken":                    return "\"<<refreshToken>>\""
-        case "challengetoken":                  return "\"<<challengeToken>>\""
-        case "code":                            return "\"<<otpCode>>\""
-        case "phonenumber":                     return "\"<<phoneNumber>>\""
-        case "credentialid":                    return "\"<<credentialId>>\""
-        case "displayname":                     return "\"<<displayName>>\""
-        case "title":                           return "\"<<title>>\""
+        case "email":                           return "\"{{email}}\""
+        case "password", "newpassword":         return "\"{{password}}\""
+        case "idtoken":                         return "\"{{idToken}}\""
+        case "refreshtoken":                    return "\"{{refreshToken}}\""
+        case "challengetoken":                  return "\"{{challengeToken}}\""
+        case "code":                            return "\"{{otpCode}}\""
+        case "phonenumber":                     return "\"{{phoneNumber}}\""
+        case "credentialid":                    return "\"{{credentialId}}\""
+        case "displayname":                     return "\"{{displayName}}\""
+        case "title":                           return "\"{{title}}\""
         default: break
         }
 
@@ -613,7 +805,7 @@ struct RouteDocumentationGenerator {
         .mobile-theme{margin-left:auto}
 
         /* ===== MAIN ===== */
-        .content{margin-left:var(--sidebar-w);padding:2rem 2.5rem 4rem;max-width:1280px;transition:margin .2s}
+        .content{margin-left:var(--sidebar-w);padding:2rem 3rem 4rem;max-width:none;transition:margin .2s}
 
         /* ===== HERO ===== */
         .hero{margin-bottom:2.5rem}
@@ -704,6 +896,10 @@ struct RouteDocumentationGenerator {
         .env-table code{font-family:var(--mono);font-size:0.76rem;color:var(--accent);background:var(--accent-subtle);padding:0.1rem 0.35rem;border-radius:3px}
         .env-table .env-default{font-family:var(--mono);font-size:0.74rem;color:var(--text-muted)}
         .env-hint{font-weight:400;font-size:0.7rem;color:var(--text-muted);text-transform:none;letter-spacing:0;margin-left:0.3rem}
+
+        /* ===== POSTMAN LINK ===== */
+        .postman-link{color:var(--accent);text-decoration:none;font-weight:600;font-size:0.85rem}
+        .postman-link:hover{text-decoration:underline}
 
         /* ===== FOOTER ===== */
         .page-footer{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--border);color:var(--text-muted);font-size:0.72rem}

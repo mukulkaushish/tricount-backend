@@ -11,6 +11,5 @@ func routes(_ app: Application) throws {
     }
 
     let v1 = app.grouped("v1")
-    try v1.register(collection: TodoController())
     try v1.register(collection: AuthController())
 }

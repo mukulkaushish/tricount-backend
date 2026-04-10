@@ -1,8 +1,9 @@
 import Fluent
 import Foundation
 
-final class EmailVerificationOTP: Model, @unchecked Sendable {
+final class EmailVerificationOTP: Model, ExpiringRecord, @unchecked Sendable {
     static let schema = "email_verification_otps"
+    static let lifetime: OTPLifetime = .tenMinutes
 
     @ID(key: .id)
     var id: UUID?
@@ -42,7 +43,4 @@ final class EmailVerificationOTP: Model, @unchecked Sendable {
         self.expiresAt = expiresAt
         self.isUsed = isUsed
     }
-
-    var isExpired: Bool { expiresAt < Date() }
-    var isValid: Bool { !isUsed && !isExpired }
 }
