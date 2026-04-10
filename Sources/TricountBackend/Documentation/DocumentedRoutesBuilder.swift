@@ -101,12 +101,12 @@ struct DocumentedRoutesBuilder {
         let metadata = RouteDocumentationMetadata(
             auth: defaultAuth,
             requestBody: nil,
-            successResponse: .data(ResponseBody.self, status: status)
+            successResponse: .raw(ResponseBody.self, status: status)
         )
 
         return register(method: .GET, path: path, metadata: metadata) { request in
             let responseBody = try await closure(request)
-            return try Response.data(responseBody, status: status)
+            return try Response.json(responseBody, status: status)
         }
     }
 
@@ -156,13 +156,13 @@ struct DocumentedRoutesBuilder {
         let metadata = RouteDocumentationMetadata(
             auth: defaultAuth,
             requestBody: .json(RequestBody.self),
-            successResponse: .data(ResponseBody.self, status: status)
+            successResponse: .raw(ResponseBody.self, status: status)
         )
 
         return register(method: .POST, path: path, metadata: metadata) { request in
             let requestBody = try request.decodeContent(RequestBody.self)
             let responseBody = try await closure(request, requestBody)
-            return try Response.data(responseBody, status: status)
+            return try Response.json(responseBody, status: status)
         }
     }
 
@@ -184,12 +184,12 @@ struct DocumentedRoutesBuilder {
         let metadata = RouteDocumentationMetadata(
             auth: defaultAuth,
             requestBody: nil,
-            successResponse: .data(ResponseBody.self, status: status)
+            successResponse: .raw(ResponseBody.self, status: status)
         )
 
         return register(method: .POST, path: path, metadata: metadata) { request in
             let responseBody = try await closure(request)
-            return try Response.data(responseBody, status: status)
+            return try Response.json(responseBody, status: status)
         }
     }
 

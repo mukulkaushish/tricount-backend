@@ -8,7 +8,7 @@ extension TestingHTTPResponse {
     }
 
     func decodeData<T: Content>(_ type: T.Type = T.self) throws -> T {
-        try decodeBody(DataResponse<T>.self).data
+        try decodeBody(type)
     }
 
     var bodyString: String {

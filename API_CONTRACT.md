@@ -17,7 +17,7 @@
 | Timestamps | ISO 8601 strings (`2024-01-15T10:30:00Z`) |
 | IDs | UUID v4 strings |
 | Error shape | `{ "error": "...", "message": "...", "statusCode": N }` |
-| Success shape | `{ "data": { ... } }` |
+| Success shape | `{ ... }` (flat JSON, no envelope) |
 
 ---
 
@@ -54,19 +54,17 @@ POST /auth/login
 
 ```json
 {
-  "data": {
-    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "refreshToken": "dGhpcyBpcyBhIHJlZnJlc2ggdG9rZW4...",
-    "expiresIn": 3600,
-    "user": {
-      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-      "displayName": "Alex Smith",
-      "email": "alex@example.com",
-      "avatarUrl": null,
-      "isEmailVerified": false,
-      "verifiedAt": null,
-      "createdAt": "2024-01-15T10:30:00Z"
-    }
+  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refreshToken": "dGhpcyBpcyBhIHJlZnJlc2ggdG9rZW4...",
+  "expiresIn": 3600,
+  "user": {
+    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "displayName": "Alex Smith",
+    "email": "alex@example.com",
+    "avatarUrl": null,
+    "isEmailVerified": false,
+    "verifiedAt": null,
+    "createdAt": "2024-01-15T10:30:00Z"
   }
 }
 ```
@@ -100,19 +98,17 @@ POST /auth/register
 
 ```json
 {
-  "data": {
-    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "refreshToken": "dGhpcyBpcyBhIHJlZnJlc2ggdG9rZW4...",
-    "expiresIn": 3600,
-    "user": {
-      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-      "displayName": "Alex Smith",
-      "email": "alex@example.com",
-      "avatarUrl": null,
-      "isEmailVerified": false,
-      "verifiedAt": null,
-      "createdAt": "2024-01-15T10:30:00Z"
-    }
+  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refreshToken": "dGhpcyBpcyBhIHJlZnJlc2ggdG9rZW4...",
+  "expiresIn": 3600,
+  "user": {
+    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "displayName": "Alex Smith",
+    "email": "alex@example.com",
+    "avatarUrl": null,
+    "isEmailVerified": false,
+    "verifiedAt": null,
+    "createdAt": "2024-01-15T10:30:00Z"
   }
 }
 ```
@@ -145,9 +141,7 @@ POST /auth/forgot-password
 
 ```json
 {
-  "data": {
-    "message": "If the account exists, a password reset link will be sent."
-  }
+  "message": "If the account exists, a password reset link will be sent."
 }
 ```
 
@@ -210,11 +204,9 @@ POST /auth/refresh
 
 ```json
 {
-  "data": {
-    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "refreshToken": "bmV3UmVmcmVzaFRva2Vu...",
-    "expiresIn": 3600
-  }
+  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refreshToken": "bmV3UmVmcmVzaFRva2Vu...",
+  "expiresIn": 3600
 }
 ```
 
@@ -266,15 +258,13 @@ Authorization: Bearer <accessToken>
 
 ```json
 {
-  "data": {
-    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    "displayName": "Alex Smith",
-    "email": "alex@example.com",
-    "avatarUrl": "https://storage.splitser.dev/avatars/a1b2.jpg",
-    "isEmailVerified": true,
-    "verifiedAt": "2024-01-15T10:45:00Z",
-    "createdAt": "2024-01-15T10:30:00Z"
-  }
+  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "displayName": "Alex Smith",
+  "email": "alex@example.com",
+  "avatarUrl": "https://storage.splitser.dev/avatars/a1b2.jpg",
+  "isEmailVerified": true,
+  "verifiedAt": "2024-01-15T10:45:00Z",
+  "createdAt": "2024-01-15T10:30:00Z"
 }
 ```
 
@@ -364,9 +354,7 @@ Authorization: Bearer <accessToken>
 
 ```json
 {
-  "data": {
-    "message": "Verification code sent to alex@example.com."
-  }
+  "message": "Verification code sent to alex@example.com."
 }
 ```
 
