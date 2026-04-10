@@ -382,6 +382,11 @@ struct TricountBackendTests {
     @Test("Rate-limit policies are configured correctly")
     func routePoliciesAreConfigured() async throws {
         try await withApp { app in
+            let loginRoute = route(app, method: .POST, suffix: "/v1/auth/login")
+            #expect(loginRoute?.rateLimitPolicy?.identifier == "auth.login")
+            #expect(loginRoute?.rateLimitPolicy?.limit == 10)
+            #expect(loginRoute?.rateLimitPolicy?.windowSeconds == 900)
+
             let googleRoute = route(app, method: .POST, suffix: "/v1/auth/google")
             #expect(googleRoute?.rateLimitPolicy == nil)
 
