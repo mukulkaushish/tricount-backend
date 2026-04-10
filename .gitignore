@@ -1,0 +1,48 @@
+# ── Swift / Xcode ──────────────────────────────
+.build/
+Packages/
+.swiftpm/
+DerivedData/
+xcuserdata/
+*.xcodeproj
+*.xcworkspace
+Package.resolved
+
+# ── Generated documentation (written at startup) ─
+Public/docs/
+
+# ── Database files ────────────────────────────────
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# ── Environment / secrets ─────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Editor / IDE settings ─────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Claude Code ───────────────────────────────────
+.claude/
+
+# ── Coverage / profiling ─────────────────────────
+default.profraw
+*.profdata
+*.xcresult
+
+# ── OS files ──────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Docker (local volumes, overrides) ────────────
+docker-compose.override.yml
+
+# ── Logs ──────────────────────────────────────────
+*.log
+logs/
