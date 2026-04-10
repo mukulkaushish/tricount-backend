@@ -54,6 +54,7 @@ POST /auth/login
 
 ```json
 {
+  "requiresMFA": false,
   "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
   "refreshToken": "dGhpcyBpcyBhIHJlZnJlc2ggdG9rZW4...",
   "expiresIn": 3600,
@@ -65,7 +66,8 @@ POST /auth/login
     "isEmailVerified": false,
     "verifiedAt": null,
     "createdAt": "2024-01-15T10:30:00Z"
-  }
+  },
+  "mfaChallenge": null
 }
 ```
 
@@ -98,6 +100,7 @@ POST /auth/register
 
 ```json
 {
+  "requiresMFA": false,
   "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
   "refreshToken": "dGhpcyBpcyBhIHJlZnJlc2ggdG9rZW4...",
   "expiresIn": 3600,
@@ -109,7 +112,8 @@ POST /auth/register
     "isEmailVerified": false,
     "verifiedAt": null,
     "createdAt": "2024-01-15T10:30:00Z"
-  }
+  },
+  "mfaChallenge": null
 }
 ```
 
