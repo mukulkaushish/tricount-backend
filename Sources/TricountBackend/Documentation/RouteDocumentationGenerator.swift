@@ -458,7 +458,8 @@ struct RouteDocumentationGenerator {
         // Hero
         html += "<div class=\"hero\">\n"
         html += "  <h1>API Reference</h1>\n"
-        html += "  <p class=\"hero-sub\">Complete endpoint documentation for <strong>tricount-backend</strong></p>\n"
+        html += "  <p class=\"hero-sub\">Complete endpoint documentation for <strong>tricount-backend</strong>"
+        html += " &middot; <a class=\"postman-link\" href=\"/docs/Tricount-Backend.postman_collection.json\" download>Download Postman Collection</a></p>\n"
         html += "  <div class=\"hero-stats\">\n"
         html += "    <div class=\"stat-card\"><div class=\"stat-value\">\(snapshot.routeCount)</div><div class=\"stat-label\">Endpoints</div></div>\n"
         html += "    <div class=\"stat-card\"><div class=\"stat-value\">\(snapshot.schemas.count)</div><div class=\"stat-label\">Schemas</div></div>\n"
@@ -466,24 +467,24 @@ struct RouteDocumentationGenerator {
         html += "  </div>\n"
         html += "</div>\n"
 
-        // --- Environment Variables Legend (Hoppscotch <<variable>> syntax) ---
+        // --- Environment Variables Legend (Postman {{variable}} syntax) ---
         html += "<div class=\"env-legend\">\n"
         html += "  <div class=\"env-legend-title\">"
         html += "<svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z\"/></svg>"
-        html += " Environment Variables <span class=\"env-hint\">(Hoppscotch &lt;&lt;variable&gt;&gt; syntax \u{2014} copy &amp; paste directly)</span></div>\n"
+        html += " Environment Variables <span class=\"env-hint\">(Postman {{variable}} syntax \u{2014} copy &amp; paste directly)</span></div>\n"
         html += "  <table class=\"env-table\">\n"
         html += "    <thead><tr><th>Variable</th><th>Description</th><th>Default</th></tr></thead>\n"
         html += "    <tbody>\n"
-        html += "    <tr><td><code>&lt;&lt;baseURL&gt;&gt;</code></td><td>API base URL</td><td class=\"env-default\">http://127.0.0.1:8080</td></tr>\n"
-        html += "    <tr><td><code>&lt;&lt;accessToken&gt;&gt;</code></td><td>JWT access token from login/register</td><td class=\"env-default\">\u{2014}</td></tr>\n"
-        html += "    <tr><td><code>&lt;&lt;refreshToken&gt;&gt;</code></td><td>Refresh token from login/register</td><td class=\"env-default\">\u{2014}</td></tr>\n"
-        html += "    <tr><td><code>&lt;&lt;userEmail&gt;&gt;</code></td><td>Test user email</td><td class=\"env-default\">user@example.com</td></tr>\n"
-        html += "    <tr><td><code>&lt;&lt;userPassword&gt;&gt;</code></td><td>Test user password</td><td class=\"env-default\">Password1</td></tr>\n"
-        html += "    <tr><td><code>&lt;&lt;challengeToken&gt;&gt;</code></td><td>MFA challenge token from login response</td><td class=\"env-default\">\u{2014}</td></tr>\n"
-        html += "    <tr><td><code>&lt;&lt;otpCode&gt;&gt;</code></td><td>6-digit OTP code from email/SMS</td><td class=\"env-default\">\u{2014}</td></tr>\n"
-        html += "    <tr><td><code>&lt;&lt;idToken&gt;&gt;</code></td><td>Google/Apple OAuth ID token</td><td class=\"env-default\">\u{2014}</td></tr>\n"
-        html += "    <tr><td><code>&lt;&lt;displayName&gt;&gt;</code></td><td>User display name</td><td class=\"env-default\">Test User</td></tr>\n"
-        html += "    <tr><td><code>&lt;&lt;phoneNumber&gt;&gt;</code></td><td>Phone in E.164 format</td><td class=\"env-default\">+919876543210</td></tr>\n"
+        html += "    <tr><td><code>{{baseUrl}}</code></td><td>API base URL</td><td class=\"env-default\">http://localhost:8080</td></tr>\n"
+        html += "    <tr><td><code>{{accessToken}}</code></td><td>JWT access token (auto-saved from login/register)</td><td class=\"env-default\">\u{2014}</td></tr>\n"
+        html += "    <tr><td><code>{{refreshToken}}</code></td><td>Refresh token (auto-saved from login/register)</td><td class=\"env-default\">\u{2014}</td></tr>\n"
+        html += "    <tr><td><code>{{email}}</code></td><td>Test user email</td><td class=\"env-default\">test@example.com</td></tr>\n"
+        html += "    <tr><td><code>{{password}}</code></td><td>Test user password</td><td class=\"env-default\">Test1234</td></tr>\n"
+        html += "    <tr><td><code>{{challengeToken}}</code></td><td>MFA challenge token (auto-saved from login)</td><td class=\"env-default\">\u{2014}</td></tr>\n"
+        html += "    <tr><td><code>{{otpCode}}</code></td><td>6-digit OTP code from email/SMS</td><td class=\"env-default\">\u{2014}</td></tr>\n"
+        html += "    <tr><td><code>{{idToken}}</code></td><td>Google/Apple OAuth ID token</td><td class=\"env-default\">\u{2014}</td></tr>\n"
+        html += "    <tr><td><code>{{displayName}}</code></td><td>User display name</td><td class=\"env-default\">Test User</td></tr>\n"
+        html += "    <tr><td><code>{{phoneNumber}}</code></td><td>Phone in E.164 format</td><td class=\"env-default\">+919876543210</td></tr>\n"
         html += "    </tbody>\n"
         html += "  </table>\n"
         html += "</div>\n"
@@ -583,10 +584,10 @@ struct RouteDocumentationGenerator {
     }
 
     private func curlExample(for route: RouteDocumentationEntry) -> String {
-        var parts: [String] = ["curl -X \(route.method) \"<<baseURL>>\(route.path)\""]
+        var parts: [String] = ["curl -X \(route.method) \"{{baseUrl}}\(route.path)\""]
         parts.append("  -H \"Content-Type: application/json\"")
         if route.auth == "bearer" {
-            parts.append("  -H \"Authorization: Bearer <<accessToken>>\"")
+            parts.append("  -H \"Authorization: Bearer {{accessToken}}\"")
         }
         if let rb = route.requestBody {
             let sampleBody = sampleJSON(for: rb.schema, indent: 4)
@@ -612,19 +613,19 @@ struct RouteDocumentationGenerator {
     }
 
     private func sampleValue(for type: String, fieldName: String = "") -> String {
-        // Map well-known field names to Hoppscotch <<variable>> syntax
+        // Map well-known field names to Postman {{variable}} syntax
         let name = fieldName.lowercased()
         switch name {
-        case "email":                           return "\"<<userEmail>>\""
-        case "password", "newpassword":         return "\"<<userPassword>>\""
-        case "idtoken":                         return "\"<<idToken>>\""
-        case "refreshtoken":                    return "\"<<refreshToken>>\""
-        case "challengetoken":                  return "\"<<challengeToken>>\""
-        case "code":                            return "\"<<otpCode>>\""
-        case "phonenumber":                     return "\"<<phoneNumber>>\""
-        case "credentialid":                    return "\"<<credentialId>>\""
-        case "displayname":                     return "\"<<displayName>>\""
-        case "title":                           return "\"<<title>>\""
+        case "email":                           return "\"{{email}}\""
+        case "password", "newpassword":         return "\"{{password}}\""
+        case "idtoken":                         return "\"{{idToken}}\""
+        case "refreshtoken":                    return "\"{{refreshToken}}\""
+        case "challengetoken":                  return "\"{{challengeToken}}\""
+        case "code":                            return "\"{{otpCode}}\""
+        case "phonenumber":                     return "\"{{phoneNumber}}\""
+        case "credentialid":                    return "\"{{credentialId}}\""
+        case "displayname":                     return "\"{{displayName}}\""
+        case "title":                           return "\"{{title}}\""
         default: break
         }
 
@@ -799,7 +800,7 @@ struct RouteDocumentationGenerator {
         .mobile-theme{margin-left:auto}
 
         /* ===== MAIN ===== */
-        .content{margin-left:var(--sidebar-w);padding:2rem 2.5rem 4rem;max-width:1280px;transition:margin .2s}
+        .content{margin-left:var(--sidebar-w);padding:2rem 3rem 4rem;max-width:none;transition:margin .2s}
 
         /* ===== HERO ===== */
         .hero{margin-bottom:2.5rem}
@@ -890,6 +891,10 @@ struct RouteDocumentationGenerator {
         .env-table code{font-family:var(--mono);font-size:0.76rem;color:var(--accent);background:var(--accent-subtle);padding:0.1rem 0.35rem;border-radius:3px}
         .env-table .env-default{font-family:var(--mono);font-size:0.74rem;color:var(--text-muted)}
         .env-hint{font-weight:400;font-size:0.7rem;color:var(--text-muted);text-transform:none;letter-spacing:0;margin-left:0.3rem}
+
+        /* ===== POSTMAN LINK ===== */
+        .postman-link{color:var(--accent);text-decoration:none;font-weight:600;font-size:0.85rem}
+        .postman-link:hover{text-decoration:underline}
 
         /* ===== FOOTER ===== */
         .page-footer{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--border);color:var(--text-muted);font-size:0.72rem}

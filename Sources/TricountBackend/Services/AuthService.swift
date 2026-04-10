@@ -900,8 +900,8 @@ struct AuthService {
             .filter(\.$user.$id == userId)
             .filter(\.$isUsed == false)
 
-        if let purpose { _ = query.filter(\.$purposeRawValue == purpose.rawValue) }
-        if let method { _ = query.filter(\.$methodRawValueStorage == method.rawValue) }
+        if let purpose { query.filter(\.$purposeRawValue == purpose.rawValue) }
+        if let method { query.filter(\.$methodRawValueStorage == method.rawValue) }
 
         try await query.set(\.$isUsed, to: true).update()
     }
