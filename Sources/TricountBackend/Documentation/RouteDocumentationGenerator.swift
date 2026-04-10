@@ -16,21 +16,207 @@ struct RouteDocumentationGenerator {
         )
 
         let snapshot = makeSnapshot()
-        let jsonURL = outputDirectory.appendingPathComponent("routes.json")
-        let markdownURL = outputDirectory.appendingPathComponent("routes.md")
-
-        let jsonData = try JSONSerialization.data(
-            withJSONObject: snapshot.jsonObject,
-            options: [.prettyPrinted, .sortedKeys]
-        )
-        try jsonData.write(to: jsonURL, options: .atomic)
 
         let markdown = renderMarkdown(for: snapshot)
+        let markdownURL = outputDirectory.appendingPathComponent("routes.md")
         try markdown.write(to: markdownURL, atomically: true, encoding: .utf8)
 
         let html = renderHTML(for: snapshot)
         let htmlURL = outputDirectory.appendingPathComponent("index.html")
         try html.write(to: htmlURL, atomically: true, encoding: .utf8)
+
+        let postman = renderPostmanCollection(for: snapshot)
+        let postmanData = try JSONSerialization.data(
+            withJSONObject: postman,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+        let postmanURL = outputDirectory.appendingPathComponent("Tricount-Backend.postman_collection.json")
+        try postmanData.write(to: postmanURL, options: .atomic)
+    }
+
+    // MARK: - Postman Collection v2.1
+
+    private func renderPostmanCollection(for snapshot: RouteDocumentationSnapshot) -> [String: Any] {
+        // Group routes by path prefix for folder organization
+        let groups = routeGroups(from: snapshot.routes)
+
+        // Token extraction script (collection-level test)
+        let tokenScript: [String: Any] = [
+            "listen": "test",
+            "script": [
+                "type": "text/javascript",
+                "exec": [
+                    "if (pm.response.code >= 200 && pm.response.code < 300) {",
+                    "    try {",
+                    "        var json = pm.response.json();",
+                    "        var body = json.data ? json.data : json;",
+                    "        if (body.accessToken) {",
+                    "            pm.collectionVariables.set('accessToken', body.accessToken);",
+                    "        }",
+                    "        if (body.refreshToken) {",
+                    "            pm.collectionVariables.set('refreshToken', body.refreshToken);",
+                    "        }",
+                    "        if (body.mfaChallenge && body.mfaChallenge.challengeToken) {",
+                    "            pm.collectionVariables.set('challengeToken', body.mfaChallenge.challengeToken);",
+                    "        }",
+                    "    } catch(e) {}",
+                    "}"
+                ]
+            ] as [String: Any]
+        ]
+
+        let folders: [[String: Any]] = groups.map { group in
+            let items: [[String: Any]] = group.routes.map { route in
+                postmanItem(for: route)
+            }
+            return [
+                "name": group.title,
+                "item": items
+            ]
+        }
+
+        return [
+            "info": [
+                "name": "Tricount Backend",
+                "description": "Auto-generated from registered Vapor routes at startup.\nTokens auto-extracted from auth responses.",
+                "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+            ] as [String: Any],
+            "variable": [
+                ["key": "baseUrl", "value": "http://localhost:8080", "type": "string"],
+                ["key": "accessToken", "value": "", "type": "string"],
+                ["key": "refreshToken", "value": "", "type": "string"],
+                ["key": "challengeToken", "value": "", "type": "string"],
+                ["key": "email", "value": "test@example.com", "type": "string"],
+                ["key": "password", "value": "Test1234", "type": "string"],
+                ["key": "displayName", "value": "Test User", "type": "string"]
+            ],
+            "auth": [
+                "type": "bearer",
+                "bearer": [["key": "token", "value": "{{accessToken}}", "type": "string"]]
+            ] as [String: Any],
+            "event": [tokenScript],
+            "item": folders
+        ]
+    }
+
+    private func postmanItem(for route: RouteDocumentationEntry) -> [String: Any] {
+        let pathComponents = route.path
+            .split(separator: "/")
+            .map(String.init)
+
+        let name = postmanRequestName(method: route.method, path: route.path)
+        let needsAuth = route.auth == "bearer"
+
+        var request: [String: Any] = [
+            "method": route.method,
+            "url": [
+                "raw": "{{baseUrl}}\(route.path)",
+                "host": ["{{baseUrl}}"],
+                "path": pathComponents
+            ] as [String: Any]
+        ]
+
+        if !needsAuth {
+            request["auth"] = ["type": "noauth"]
+        }
+
+        if let body = route.requestBody {
+            request["header"] = [["key": "Content-Type", "value": "application/json"]]
+            let sampleBody = postmanSampleBody(for: body.schema)
+            if let jsonData = try? JSONSerialization.data(withJSONObject: sampleBody, options: [.prettyPrinted, .sortedKeys]),
+               let jsonString = String(data: jsonData, encoding: .utf8) {
+                request["body"] = [
+                    "mode": "raw",
+                    "raw": jsonString
+                ] as [String: Any]
+            }
+        }
+
+        var item: [String: Any] = [
+            "name": name,
+            "request": request
+        ]
+
+        // Add status test
+        let statusCode = route.successResponse.statusCode
+        item["event"] = [[
+            "listen": "test",
+            "script": [
+                "type": "text/javascript",
+                "exec": ["pm.test('Status is \(statusCode)', () => pm.response.to.have.status(\(statusCode)));"]
+            ] as [String: Any]
+        ]]
+
+        return item
+    }
+
+    private func postmanRequestName(method: String, path: String) -> String {
+        let segments = path
+            .split(separator: "/")
+            .filter { $0 != "v1" && $0 != "auth" }
+
+        if segments.isEmpty {
+            return "\(method) /"
+        }
+
+        return segments
+            .map { segment in
+                segment.split(separator: "-")
+                    .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+                    .joined(separator: " ")
+            }
+            .joined(separator: " > ")
+    }
+
+    private func postmanSampleBody(for schema: DocumentationSchema) -> [String: Any] {
+        switch schema {
+        case .object(let properties, _):
+            var body: [String: Any] = [:]
+            for property in properties {
+                body[property.name] = postmanSampleValue(for: property.name, schema: property.schema)
+            }
+            return body
+        default:
+            return [:]
+        }
+    }
+
+    private func postmanSampleValue(for name: String, schema: DocumentationSchema) -> Any {
+        // Use collection variables for known fields
+        switch name {
+        case "email": return "{{email}}"
+        case "password": return "{{password}}"
+        case "displayName": return "{{displayName}}"
+        case "refreshToken": return "{{refreshToken}}"
+        case "challengeToken": return "{{challengeToken}}"
+        case "idToken": return "ID_TOKEN_HERE"
+        case "code": return "123456"
+        case "newPassword": return "NewPass1234"
+        case "phoneNumber": return "+1234567890"
+        case "credentialId": return "credential-id-here"
+        default: break
+        }
+
+        switch schema {
+        case .string(let format, _):
+            switch format {
+            case "uuid": return "00000000-0000-0000-0000-000000000000"
+            case "uri": return "https://example.com"
+            case "date-time": return "2026-01-01T00:00:00Z"
+            default: return ""
+            }
+        case .integer: return 0
+        case .number: return 0.0
+        case .boolean: return false
+        case .array: return [] as [Any]
+        case .object(let properties, _):
+            var nested: [String: Any] = [:]
+            for property in properties {
+                nested[property.name] = postmanSampleValue(for: property.name, schema: property.schema)
+            }
+            return nested
+        default: return ""
+        }
     }
 
     private func makeSnapshot() -> RouteDocumentationSnapshot {
