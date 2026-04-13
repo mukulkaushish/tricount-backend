@@ -2,6 +2,7 @@ import Vapor
 
 protocol AuthSMSDispatching: Sendable {
     func sendPhoneVerificationOTP(to phoneNumber: String, code: String) async throws
+    func sendMFALoginOTP(to phoneNumber: String, code: String) async throws
 }
 
 struct LoggingAuthSMSDispatcher: AuthSMSDispatching {
@@ -12,6 +13,17 @@ struct LoggingAuthSMSDispatcher: AuthSMSDispatching {
         guard environment == .development else { return }
         logger.info(
             "Phone verification OTP generated",
+            metadata: [
+                "phoneNumber": .string(phoneNumber),
+                "code": .string(code)
+            ]
+        )
+    }
+
+    func sendMFALoginOTP(to phoneNumber: String, code: String) async throws {
+        guard environment == .development else { return }
+        logger.info(
+            "Phone MFA login OTP generated",
             metadata: [
                 "phoneNumber": .string(phoneNumber),
                 "code": .string(code)

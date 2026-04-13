@@ -5,6 +5,10 @@ struct PasskeyAuthenticationOptionsRequest: Content {
     let email: String?
 }
 
+struct PasskeyMFALoginOptionsRequest: Content {
+    let challengeToken: String
+}
+
 struct PasskeyRegistrationOptionsResponse: Content {
     let challenge: String
     let rp: PasskeyRelyingPartyDTO
@@ -36,6 +40,23 @@ struct PasskeyAuthenticationVerificationRequest: Content {
     let rawId: String
     let type: String
     let response: PasskeyAuthenticationCredentialResponseDTO
+}
+
+struct PasskeyMFALoginVerificationRequest: Content {
+    let challengeToken: String
+    let id: String
+    let rawId: String
+    let type: String
+    let response: PasskeyAuthenticationCredentialResponseDTO
+
+    var authenticationRequest: PasskeyAuthenticationVerificationRequest {
+        PasskeyAuthenticationVerificationRequest(
+            id: id,
+            rawId: rawId,
+            type: type,
+            response: response
+        )
+    }
 }
 
 struct RemovePasskeyRequest: Content {

@@ -25,7 +25,11 @@ struct AuthController: RouteCollection {
         auth.postData("apple", use: appleSignIn)
         auth.postData("refresh", use: refresh)
         auth.postData("mfa", "email", "verify", use: verifyEmailMFALogin)
+        auth.postData("mfa", "phone", "verify", use: verifyPhoneMFALogin)
         auth.postData("mfa", "authenticator-app", "verify", use: verifyAuthenticatorAppMFALogin)
+        auth.postData("mfa", "backup-codes", "verify", use: verifyBackupCodeMFALogin)
+        auth.postData("mfa", "passkeys", "authenticate", "options", use: beginPasskeyMFALogin)
+        auth.postData("mfa", "passkeys", "authenticate", "verify", use: finishPasskeyMFALogin)
         auth.postData("passkeys", "authenticate", "options", use: beginPasskeyAuthentication)
         auth.postData("passkeys", "authenticate", "verify", use: finishPasskeyAuthentication)
 
@@ -41,12 +45,16 @@ struct AuthController: RouteCollection {
                 windowSeconds: 3600
             ))
         protected.postData("verify-profile", "email", "confirm", use: confirmEmailVerificationOTP)
+        protected.postData("mfa", "enable", use: enableMFA)
+        protected.postData("mfa", "disable", use: disableMFA)
         protected.postData("mfa", "email", "enable", use: requestEmailMFAEnable)
         protected.postData("mfa", "email", "confirm-enable", use: confirmEmailMFAEnable)
         protected.postData("mfa", "email", "disable", use: disableEmailMFA)
         protected.postData("mfa", "authenticator-app", "setup", use: beginAuthenticatorAppMFASetup)
         protected.postData("mfa", "authenticator-app", "confirm-enable", use: confirmAuthenticatorAppMFAEnable)
         protected.postData("mfa", "authenticator-app", "disable", use: disableAuthenticatorAppMFA)
+        protected.postData("mfa", "backup-codes", "generate", use: generateBackupCodes)
+        protected.postData("mfa", "backup-codes", "regenerate", use: regenerateBackupCodes)
         protected.postData("phone", "request-verification", use: requestPhoneVerification)
         protected.postData("phone", "confirm-verification", use: confirmPhoneVerification)
         protected.postData("phone", "remove", use: removePhoneNumber)
@@ -120,8 +128,34 @@ struct AuthController: RouteCollection {
     }
 
     @Sendable
+    func verifyPhoneMFALogin(req: Request, body: MFALoginVerifyRequest) async throws -> AuthResponse {
+        try await req.authService.verifyPhoneMFALogin(dto: body)
+    }
+
+    @Sendable
     func verifyAuthenticatorAppMFALogin(req: Request, body: MFALoginVerifyRequest) async throws -> AuthResponse {
         try await req.authService.verifyAuthenticatorAppMFALogin(dto: body)
+    }
+
+    @Sendable
+    func verifyBackupCodeMFALogin(req: Request, body: MFALoginVerifyRequest) async throws -> AuthResponse {
+        try await req.authService.verifyBackupCodeMFALogin(dto: body)
+    }
+
+    @Sendable
+    func beginPasskeyMFALogin(
+        req: Request,
+        body: PasskeyMFALoginOptionsRequest
+    ) async throws -> PasskeyAuthenticationOptionsResponse {
+        try await req.authService.beginPasskeyMFALogin(dto: body)
+    }
+
+    @Sendable
+    func finishPasskeyMFALogin(
+        req: Request,
+        body: PasskeyMFALoginVerificationRequest
+    ) async throws -> AuthResponse {
+        try await req.authService.finishPasskeyMFALogin(dto: body)
     }
 
     @Sendable
@@ -147,6 +181,16 @@ struct AuthController: RouteCollection {
     @Sendable
     func confirmEmailVerificationOTP(req: Request, body: VerifyEmailOTPRequest) async throws -> UserDTO {
         try await req.authService.confirmEmailVerificationOTP(dto: body)
+    }
+
+    @Sendable
+    func enableMFA(req: Request, body: EnableMFARequest) async throws -> UserDTO {
+        try await req.authService.enableMFA(dto: body)
+    }
+
+    @Sendable
+    func disableMFA(req: Request) async throws -> UserDTO {
+        try await req.authService.disableMFA()
     }
 
     @Sendable
@@ -180,6 +224,16 @@ struct AuthController: RouteCollection {
     @Sendable
     func disableAuthenticatorAppMFA(req: Request) async throws -> UserDTO {
         try await req.authService.disableAuthenticatorAppMFA()
+    }
+
+    @Sendable
+    func generateBackupCodes(req: Request) async throws -> BackupCodesResponse {
+        try await req.authService.generateBackupCodes()
+    }
+
+    @Sendable
+    func regenerateBackupCodes(req: Request) async throws -> BackupCodesResponse {
+        try await req.authService.regenerateBackupCodes()
     }
 
     @Sendable

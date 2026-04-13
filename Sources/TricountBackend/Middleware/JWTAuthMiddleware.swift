@@ -36,6 +36,7 @@ enum AuthError: AbortError {
     case passwordResetCodeInvalid
     case mfaChallengeInvalid
     case mfaCodeInvalid
+    case mfaConfigurationInvalid
     case mfaRequiresVerifiedEmail
     case phoneVerificationCodeInvalid
     case authenticatorAppSetupInvalid
@@ -56,7 +57,8 @@ enum AuthError: AbortError {
              .passkeyCredentialNotFound:
             return .unauthorized
         case .emailAlreadyExists, .verificationEmailMismatch,
-             .socialAccountAlreadyLinked, .passkeyCredentialAlreadyExists:
+             .socialAccountAlreadyLinked, .passkeyCredentialAlreadyExists,
+             .mfaConfigurationInvalid:
             return .conflict
         case .appleEmailMissing, .mfaRequiresVerifiedEmail:
             return .unprocessableEntity
@@ -86,6 +88,8 @@ enum AuthError: AbortError {
             return "MFA challenge invalid or expired"
         case .mfaCodeInvalid:
             return "MFA code invalid or expired"
+        case .mfaConfigurationInvalid:
+            return "MFA is enabled but no primary MFA method is currently configured"
         case .mfaRequiresVerifiedEmail:
             return "MFA requires a verified email address"
         case .phoneVerificationCodeInvalid:
@@ -123,6 +127,7 @@ enum AuthError: AbortError {
         case .passwordResetCodeInvalid: return "PASSWORD_RESET_CODE_INVALID"
         case .mfaChallengeInvalid: return "MFA_CHALLENGE_INVALID"
         case .mfaCodeInvalid: return "MFA_CODE_INVALID"
+        case .mfaConfigurationInvalid: return "MFA_CONFIGURATION_INVALID"
         case .mfaRequiresVerifiedEmail: return "MFA_REQUIRES_VERIFIED_EMAIL"
         case .phoneVerificationCodeInvalid: return "PHONE_VERIFICATION_CODE_INVALID"
         case .authenticatorAppSetupInvalid: return "AUTHENTICATOR_APP_SETUP_INVALID"

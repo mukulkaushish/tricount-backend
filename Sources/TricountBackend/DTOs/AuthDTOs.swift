@@ -48,6 +48,10 @@ struct MFALoginVerifyRequest: Content {
     let code: String
 }
 
+struct EnableMFARequest: Content {
+    let method: String
+}
+
 struct ConfirmEmailMFAEnableRequest: Content {
     let code: String
 }
@@ -67,6 +71,11 @@ struct AuthenticatorAppMFASetupResponse: Content {
     let otpauthURL: String
     let digits: Int
     let period: Int
+}
+
+struct BackupCodesResponse: Content {
+    let codes: [String]
+    let totalCount: Int
 }
 
 // MARK: - Responses
@@ -108,6 +117,9 @@ struct MFAChallengeResponse: Content {
     let method: String
     let challengeToken: String?
     let expiresIn: Int?
+    let displayName: String?
+    let verificationType: String?
+    let destinationHint: String?
 }
 
 struct AuthenticationResultResponse: Content {
@@ -117,6 +129,7 @@ struct AuthenticationResultResponse: Content {
     let expiresIn: Int?
     let user: UserDTO?
     let mfaChallenge: MFAChallengeResponse?
+    let mfaOptions: [MFAChallengeResponse]?
 
     static func authenticated(from response: AuthResponse) -> AuthenticationResultResponse {
         AuthenticationResultResponse(
@@ -125,18 +138,23 @@ struct AuthenticationResultResponse: Content {
             refreshToken: response.refreshToken,
             expiresIn: response.expiresIn,
             user: response.user,
-            mfaChallenge: nil
+            mfaChallenge: nil,
+            mfaOptions: nil
         )
     }
 
-    static func requiresMFA(challenge: MFAChallengeResponse) -> AuthenticationResultResponse {
+    static func requiresMFA(
+        challenge: MFAChallengeResponse,
+        options: [MFAChallengeResponse]
+    ) -> AuthenticationResultResponse {
         AuthenticationResultResponse(
             requiresMFA: true,
             accessToken: nil,
             refreshToken: nil,
             expiresIn: nil,
             user: nil,
-            mfaChallenge: challenge
+            mfaChallenge: challenge,
+            mfaOptions: options
         )
     }
 }
@@ -170,4 +188,3 @@ struct ErrorResponse: Content {
     let message: String
     let statusCode: Int
 }
-

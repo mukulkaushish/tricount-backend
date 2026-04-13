@@ -27,6 +27,7 @@ private struct SocialIdentityProfile: Sendable {
 
 struct AuthService {
     let req: Request
+    private static let backupCodeCount = 10
 
     // MARK: - Login
 
@@ -292,6 +293,41 @@ struct AuthService {
 
     // MARK: - MFA
 
+    func enableMFA(dto: EnableMFARequest) async throws -> UserDTO {
+        let user = try await currentUser()
+        let rawMethod = dto.method.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let method = EmailMFAChallenge.Method(rawValue: rawMethod) else {
+            throw Abort(.badRequest, reason: "Unsupported MFA method")
+        }
+
+        guard method != .backupCode else {
+            throw Abort(.unprocessableEntity, reason: "Backup codes cannot be used as the primary MFA method")
+        }
+
+        guard try await isMFAMethodAvailable(method, for: user) else {
+            throw Abort(.unprocessableEntity, reason: "Selected MFA method is not configured and verified")
+        }
+
+        user.isMFAEnabled = true
+        user.mfaMethod = method.rawValue
+        try await user.save(on: req.db)
+
+        return UserDTO(from: user)
+    }
+
+    func disableMFA() async throws -> UserDTO {
+        let user = try await currentUser()
+        let userId = try requireUserID(from: user)
+
+        try await invalidateEmailMFAChallenges(for: userId, purpose: .login)
+
+        user.isMFAEnabled = false
+        user.mfaMethod = nil
+        try await user.save(on: req.db)
+        return UserDTO(from: user)
+    }
+
     func requestEmailMFAEnable() async throws -> MessageResponse {
         let user = try await currentUser()
 
@@ -380,7 +416,32 @@ struct AuthService {
         try await challenge.save(on: req.db)
 
         let user = try await challenge.$user.get(on: req.db)
-        guard user.isMFAEnabled, user.mfaMethod == EmailMFAChallenge.Method.email.rawValue else {
+        guard user.isMFAEnabled, user.isEmailVerified else {
+            throw AuthError.mfaChallengeInvalid
+        }
+
+        return try await generateTokenPair(for: user)
+    }
+
+    func verifyPhoneMFALogin(dto: MFALoginVerifyRequest) async throws -> AuthResponse {
+        let challenge = try await validMFALoginChallenge(token: dto.challengeToken, method: .phone)
+        let code = try normalizeSixDigitCode(
+            dto.code,
+            reason: "Phone MFA code must be a 6-digit number"
+        )
+
+        guard challenge.codeHash == sha256(code) else {
+            throw AuthError.mfaCodeInvalid
+        }
+
+        challenge.isUsed = true
+        try await challenge.save(on: req.db)
+
+        let user = try await challenge.$user.get(on: req.db)
+        guard user.isMFAEnabled,
+              user.isPhoneVerified,
+              user.phoneNumber != nil
+        else {
             throw AuthError.mfaChallengeInvalid
         }
 
@@ -486,7 +547,6 @@ struct AuthService {
 
         let user = try await challenge.$user.get(on: req.db)
         guard user.isMFAEnabled,
-              user.mfaMethod == EmailMFAChallenge.Method.authenticatorApp.rawValue,
               let secret = user.totpSecret,
               try TOTPService.verify(code: code, secret: secret)
         else {
@@ -497,6 +557,67 @@ struct AuthService {
         try await challenge.save(on: req.db)
 
         return try await generateTokenPair(for: user)
+    }
+
+    func verifyBackupCodeMFALogin(dto: MFALoginVerifyRequest) async throws -> AuthResponse {
+        let challenge = try await validMFALoginChallenge(token: dto.challengeToken, method: .backupCode)
+        let normalizedCode = try normalizeBackupCode(dto.code)
+
+        let user = try await challenge.$user.get(on: req.db)
+        guard user.isMFAEnabled else {
+            throw AuthError.mfaChallengeInvalid
+        }
+
+        guard let matchedCode = try await matchingBackupCode(
+            normalizedCode,
+            for: try requireUserID(from: user)
+        ) else {
+            throw AuthError.mfaCodeInvalid
+        }
+
+        matchedCode.usedAt = Date()
+        try await matchedCode.save(on: req.db)
+
+        challenge.isUsed = true
+        try await challenge.save(on: req.db)
+
+        return try await generateTokenPair(for: user)
+    }
+
+    func beginPasskeyMFALogin(dto: PasskeyMFALoginOptionsRequest) async throws -> PasskeyAuthenticationOptionsResponse {
+        let challenge = try await validMFALoginChallenge(token: dto.challengeToken, method: .passkey)
+        let user = try await challenge.$user.get(on: req.db)
+
+        guard user.isMFAEnabled else {
+            throw AuthError.mfaChallengeInvalid
+        }
+
+        return try await passkeyService.beginAuthentication(emailHint: user.email)
+    }
+
+    func finishPasskeyMFALogin(dto: PasskeyMFALoginVerificationRequest) async throws -> AuthResponse {
+        let challenge = try await validMFALoginChallenge(token: dto.challengeToken, method: .passkey)
+        let expectedUser = try await challenge.$user.get(on: req.db)
+        let authenticatedUser = try await passkeyService.finishAuthentication(dto.authenticationRequest)
+
+        guard expectedUser.id == authenticatedUser.id,
+              authenticatedUser.isMFAEnabled
+        else {
+            throw AuthError.mfaChallengeInvalid
+        }
+
+        challenge.isUsed = true
+        try await challenge.save(on: req.db)
+
+        return try await generateTokenPair(for: authenticatedUser)
+    }
+
+    func generateBackupCodes() async throws -> BackupCodesResponse {
+        try await replaceBackupCodes()
+    }
+
+    func regenerateBackupCodes() async throws -> BackupCodesResponse {
+        try await replaceBackupCodes()
     }
 
     func requestPhoneVerification(dto: SetupPhoneVerificationRequest) async throws -> MessageResponse {
@@ -559,11 +680,21 @@ struct AuthService {
         let user = try await currentUser()
         let userId = try requireUserID(from: user)
 
+        if user.isMFAEnabled,
+           user.mfaMethod == EmailMFAChallenge.Method.phone.rawValue,
+           let fallbackMethod = try await fallbackPrimaryMFAMethod(for: user, removing: .phone) {
+            user.mfaMethod = fallbackMethod.rawValue
+        } else if user.isMFAEnabled,
+                  user.mfaMethod == EmailMFAChallenge.Method.phone.rawValue {
+            throw Abort(.conflict, reason: "Add another MFA method before removing your verified phone number.")
+        }
+
         try await PhoneVerificationOTP.query(on: req.db)
             .filter(\.$user.$id == userId)
             .filter(\.$isUsed == false)
             .set(\.$isUsed, to: true)
             .update()
+        try await invalidateEmailMFAChallenges(for: userId, purpose: .login, method: .phone)
 
         user.phoneNumber = nil
         user.isPhoneVerified = false
@@ -584,7 +715,8 @@ struct AuthService {
     }
 
     func removePasskey(dto: RemovePasskeyRequest) async throws -> MessageResponse {
-        let userId = try req.authenticatedUserID
+        let user = try await currentUser()
+        let userId = try requireUserID(from: user)
         let credentialId = dto.credentialId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !credentialId.isEmpty else {
             throw Abort(.badRequest, reason: "credentialId is required")
@@ -598,13 +730,51 @@ struct AuthService {
             throw AuthError.passkeyCredentialNotFound
         }
 
+        let passkeyCount = try await PasskeyCredential.query(on: req.db)
+            .filter(\.$user.$id == userId)
+            .count()
+        let remainingPasskeyCount = max(0, passkeyCount - 1)
+
+        if user.isMFAEnabled,
+           user.mfaMethod == EmailMFAChallenge.Method.passkey.rawValue,
+           remainingPasskeyCount == 0,
+           let fallbackMethod = try await fallbackPrimaryMFAMethod(
+               for: user,
+               removing: .passkey,
+               remainingPasskeyCount: remainingPasskeyCount
+           ) {
+            user.mfaMethod = fallbackMethod.rawValue
+            try await user.save(on: req.db)
+        } else if user.isMFAEnabled,
+                  user.mfaMethod == EmailMFAChallenge.Method.passkey.rawValue,
+                  remainingPasskeyCount == 0 {
+            throw Abort(.conflict, reason: "Add another MFA method before removing your last passkey.")
+        }
+
+        try await invalidateEmailMFAChallenges(for: userId, purpose: .login, method: .passkey)
         try await credential.delete(on: req.db)
         return MessageResponse(message: "Passkey removed.")
     }
 
     func resetPasskeys() async throws -> MessageResponse {
-        let userId = try req.authenticatedUserID
+        let user = try await currentUser()
+        let userId = try requireUserID(from: user)
 
+        if user.isMFAEnabled,
+           user.mfaMethod == EmailMFAChallenge.Method.passkey.rawValue,
+           let fallbackMethod = try await fallbackPrimaryMFAMethod(
+               for: user,
+               removing: .passkey,
+               remainingPasskeyCount: 0
+           ) {
+            user.mfaMethod = fallbackMethod.rawValue
+            try await user.save(on: req.db)
+        } else if user.isMFAEnabled,
+                  user.mfaMethod == EmailMFAChallenge.Method.passkey.rawValue {
+            throw Abort(.conflict, reason: "Add another MFA method before removing all passkeys.")
+        }
+
+        try await invalidateEmailMFAChallenges(for: userId, purpose: .login, method: .passkey)
         try await PasskeyCredential.query(on: req.db)
             .filter(\.$user.$id == userId)
             .delete()
@@ -690,16 +860,17 @@ struct AuthService {
 
     private func completePrimaryAuthentication(for user: User) async throws -> AuthenticationResultResponse {
         if user.isMFAEnabled {
-            let challenge: MFAChallengeResponse
-            switch user.mfaMethod {
-            case EmailMFAChallenge.Method.email.rawValue:
-                challenge = try await createEmailMFALoginChallenge(for: user)
-            case EmailMFAChallenge.Method.authenticatorApp.rawValue:
-                challenge = try await createAuthenticatorAppMFALoginChallenge(for: user)
-            default:
-                throw Abort(.internalServerError, reason: "Unsupported MFA method")
+            let primaryMethods = try await availablePrimaryMFAMethods(for: user)
+            guard !primaryMethods.isEmpty else {
+                throw AuthError.mfaConfigurationInvalid
             }
-            return .requiresMFA(challenge: challenge)
+
+            let methods = try await availableMFALoginMethods(for: user, primaryMethods: primaryMethods)
+            let options = try await createMFALoginChallenges(for: user, methods: methods)
+            guard let defaultChallenge = preferredMFALoginChallenge(from: options, for: user) else {
+                throw Abort(.internalServerError, reason: "No MFA login methods are available")
+            }
+            return .requiresMFA(challenge: defaultChallenge, options: options)
         }
 
         return .authenticated(from: try await generateTokenPair(for: user))
@@ -848,7 +1019,10 @@ struct AuthService {
         return MFAChallengeResponse(
             method: "email",
             challengeToken: challengeToken,
-            expiresIn: Int(EmailMFAChallenge.lifetime.interval)
+            expiresIn: Int(EmailMFAChallenge.lifetime.interval),
+            displayName: "Email OTP",
+            verificationType: "otp",
+            destinationHint: maskedEmail(user.email)
         )
     }
 
@@ -875,8 +1049,235 @@ struct AuthService {
         return MFAChallengeResponse(
             method: EmailMFAChallenge.Method.authenticatorApp.rawValue,
             challengeToken: challengeToken,
-            expiresIn: Int(EmailMFAChallenge.lifetime.interval)
+            expiresIn: Int(EmailMFAChallenge.lifetime.interval),
+            displayName: "Authenticator App",
+            verificationType: "totp",
+            destinationHint: nil
         )
+    }
+
+    private func createPhoneMFALoginChallenge(for user: User) async throws -> MFAChallengeResponse {
+        let userId = try requireUserID(from: user)
+        guard user.isPhoneVerified, let phoneNumber = user.phoneNumber else {
+            throw Abort(.unprocessableEntity, reason: "Phone MFA requires a verified phone number")
+        }
+
+        try await invalidateEmailMFAChallenges(for: userId, purpose: .login, method: .phone)
+
+        let code = generateOTPCode()
+        let challengeToken = generateSecureToken()
+        let challenge = EmailMFAChallenge(
+            userId: userId,
+            purpose: .login,
+            method: .phone,
+            challengeTokenHash: sha256(challengeToken),
+            codeHash: sha256(code),
+            expiresAt: EmailMFAChallenge.expirationFromNow
+        )
+        try await challenge.save(on: req.db)
+
+        try await req.authSMSDispatcher.sendMFALoginOTP(to: phoneNumber, code: code)
+
+        return MFAChallengeResponse(
+            method: EmailMFAChallenge.Method.phone.rawValue,
+            challengeToken: challengeToken,
+            expiresIn: Int(EmailMFAChallenge.lifetime.interval),
+            displayName: "SMS OTP",
+            verificationType: "otp",
+            destinationHint: maskedPhoneNumber(phoneNumber)
+        )
+    }
+
+    private func createBackupCodeMFALoginChallenge(for user: User) async throws -> MFAChallengeResponse {
+        let userId = try requireUserID(from: user)
+        try await invalidateEmailMFAChallenges(for: userId, purpose: .login, method: .backupCode)
+
+        let challengeToken = generateSecureToken()
+        let challenge = EmailMFAChallenge(
+            userId: userId,
+            purpose: .login,
+            method: .backupCode,
+            challengeTokenHash: sha256(challengeToken),
+            codeHash: "",
+            expiresAt: EmailMFAChallenge.expirationFromNow
+        )
+        try await challenge.save(on: req.db)
+
+        return MFAChallengeResponse(
+            method: EmailMFAChallenge.Method.backupCode.rawValue,
+            challengeToken: challengeToken,
+            expiresIn: Int(EmailMFAChallenge.lifetime.interval),
+            displayName: "Backup Code",
+            verificationType: "backup_code",
+            destinationHint: nil
+        )
+    }
+
+    private func createPasskeyMFALoginChallenge(for user: User) async throws -> MFAChallengeResponse {
+        let userId = try requireUserID(from: user)
+        try await invalidateEmailMFAChallenges(for: userId, purpose: .login, method: .passkey)
+
+        let challengeToken = generateSecureToken()
+        let challenge = EmailMFAChallenge(
+            userId: userId,
+            purpose: .login,
+            method: .passkey,
+            challengeTokenHash: sha256(challengeToken),
+            codeHash: "",
+            expiresAt: EmailMFAChallenge.expirationFromNow
+        )
+        try await challenge.save(on: req.db)
+
+        return MFAChallengeResponse(
+            method: EmailMFAChallenge.Method.passkey.rawValue,
+            challengeToken: challengeToken,
+            expiresIn: Int(EmailMFAChallenge.lifetime.interval),
+            displayName: "Passkey",
+            verificationType: "webauthn",
+            destinationHint: nil
+        )
+    }
+
+    private func createMFALoginChallenges(
+        for user: User,
+        methods: [EmailMFAChallenge.Method]
+    ) async throws -> [MFAChallengeResponse] {
+        var challenges: [MFAChallengeResponse] = []
+        challenges.reserveCapacity(methods.count)
+
+        for method in methods {
+            switch method {
+            case .email:
+                challenges.append(try await createEmailMFALoginChallenge(for: user))
+            case .phone:
+                challenges.append(try await createPhoneMFALoginChallenge(for: user))
+            case .authenticatorApp:
+                challenges.append(try await createAuthenticatorAppMFALoginChallenge(for: user))
+            case .backupCode:
+                challenges.append(try await createBackupCodeMFALoginChallenge(for: user))
+            case .passkey:
+                challenges.append(try await createPasskeyMFALoginChallenge(for: user))
+            }
+        }
+
+        return challenges
+    }
+
+    private func availableMFALoginMethods(
+        for user: User,
+        primaryMethods: [EmailMFAChallenge.Method]? = nil
+    ) async throws -> [EmailMFAChallenge.Method] {
+        let userId = try requireUserID(from: user)
+        var methods = if let primaryMethods {
+            primaryMethods
+        } else {
+            try await availablePrimaryMFAMethods(for: user)
+        }
+        if try await hasActiveBackupCodes(for: userId) {
+            methods.append(.backupCode)
+        }
+
+        return prioritizedMFAMethods(methods, preferredMethodRawValue: user.mfaMethod)
+    }
+
+    private func isMFAMethodAvailable(
+        _ method: EmailMFAChallenge.Method,
+        for user: User
+    ) async throws -> Bool {
+        let userId = try requireUserID(from: user)
+
+        switch method {
+        case .email:
+            return user.isEmailVerified
+        case .phone:
+            return user.isPhoneVerified && user.phoneNumber != nil
+        case .authenticatorApp:
+            return user.totpSecret != nil
+        case .backupCode:
+            return try await hasActiveBackupCodes(for: userId)
+        case .passkey:
+            return try await hasRegisteredPasskeys(for: userId)
+        }
+    }
+
+    private func availablePrimaryMFAMethods(
+        for user: User,
+        excluding excludedMethods: Set<EmailMFAChallenge.Method> = [],
+        remainingPasskeyCount: Int? = nil
+    ) async throws -> [EmailMFAChallenge.Method] {
+        let userId = try requireUserID(from: user)
+        var methods: [EmailMFAChallenge.Method] = []
+
+        if user.isEmailVerified, !excludedMethods.contains(.email) {
+            methods.append(.email)
+        }
+
+        if user.isPhoneVerified,
+           user.phoneNumber != nil,
+           !excludedMethods.contains(.phone) {
+            methods.append(.phone)
+        }
+
+        if user.totpSecret != nil, !excludedMethods.contains(.authenticatorApp) {
+            methods.append(.authenticatorApp)
+        }
+
+        if !excludedMethods.contains(.passkey) {
+            let hasPasskeys: Bool
+            if let remainingPasskeyCount {
+                hasPasskeys = remainingPasskeyCount > 0
+            } else {
+                hasPasskeys = try await hasRegisteredPasskeys(for: userId)
+            }
+
+            if hasPasskeys {
+                methods.append(.passkey)
+            }
+        }
+
+        return prioritizedMFAMethods(methods, preferredMethodRawValue: user.mfaMethod)
+    }
+
+    private func fallbackPrimaryMFAMethod(
+        for user: User,
+        removing removedMethod: EmailMFAChallenge.Method,
+        remainingPasskeyCount: Int? = nil
+    ) async throws -> EmailMFAChallenge.Method? {
+        let methods = try await availablePrimaryMFAMethods(
+            for: user,
+            excluding: [removedMethod],
+            remainingPasskeyCount: remainingPasskeyCount
+        )
+        return methods.first(where: \.isPrimaryFactor)
+    }
+
+    private func prioritizedMFAMethods(
+        _ methods: [EmailMFAChallenge.Method],
+        preferredMethodRawValue: String?
+    ) -> [EmailMFAChallenge.Method] {
+        var prioritized = methods
+        let preferredMethod = EmailMFAChallenge.Method(rawValue: preferredMethodRawValue ?? "")
+        if let preferredMethod,
+           let preferredIndex = prioritized.firstIndex(of: preferredMethod),
+           preferredIndex != 0 {
+            prioritized.swapAt(0, preferredIndex)
+        }
+
+        return prioritized
+    }
+
+    private func preferredMFALoginChallenge(
+        from options: [MFAChallengeResponse],
+        for user: User
+    ) -> MFAChallengeResponse? {
+        guard !options.isEmpty else { return nil }
+
+        if let preferredMethod = user.mfaMethod,
+           let preferred = options.first(where: { $0.method == preferredMethod }) {
+            return preferred
+        }
+
+        return options.first
     }
 
     private func validMFALoginChallenge(
@@ -944,6 +1345,101 @@ struct AuthService {
         )
         try await challenge.save(on: req.db)
         return code
+    }
+
+    private func replaceBackupCodes() async throws -> BackupCodesResponse {
+        let user = try await currentUser()
+        let userId = try requireUserID(from: user)
+
+        guard try await hasAnyPrimaryMFAMethod(for: user) else {
+            throw Abort(.unprocessableEntity, reason: "Configure at least one verified MFA method before generating backup codes")
+        }
+
+        try await invalidateEmailMFAChallenges(for: userId, purpose: .login, method: .backupCode)
+
+        var rawCodes: [String] = []
+        var hashedCodes: [String] = []
+        rawCodes.reserveCapacity(Self.backupCodeCount)
+        hashedCodes.reserveCapacity(Self.backupCodeCount)
+
+        for _ in 0..<Self.backupCodeCount {
+            let rawCode = generateBackupCode()
+            rawCodes.append(rawCode)
+            let hash = try await req.passwordHasher.hash(normalizeBackupCode(rawCode), on: req.eventLoop)
+            hashedCodes.append(hash)
+        }
+        let storedCodeHashes = hashedCodes
+
+        try await req.db.transaction { db in
+            try await BackupCode.query(on: db)
+                .filter(\.$user.$id == userId)
+                .delete()
+
+            for hash in storedCodeHashes {
+                let backupCode = BackupCode(userId: userId, codeHash: hash)
+                try await backupCode.save(on: db)
+            }
+        }
+
+        return BackupCodesResponse(codes: rawCodes, totalCount: rawCodes.count)
+    }
+
+    private func hasAnyPrimaryMFAMethod(for user: User) async throws -> Bool {
+        let userId = try requireUserID(from: user)
+        if user.isEmailVerified || (user.isPhoneVerified && user.phoneNumber != nil) || user.totpSecret != nil {
+            return true
+        }
+
+        return try await hasRegisteredPasskeys(for: userId)
+    }
+
+    private func hasActiveBackupCodes(for userId: UUID) async throws -> Bool {
+        try await BackupCode.query(on: req.db)
+            .filter(\.$user.$id == userId)
+            .filter(\.$usedAt == nil)
+            .count() > 0
+    }
+
+    private func hasRegisteredPasskeys(for userId: UUID) async throws -> Bool {
+        try await PasskeyCredential.query(on: req.db)
+            .filter(\.$user.$id == userId)
+            .count() > 0
+    }
+
+    private func matchingBackupCode(_ code: String, for userId: UUID) async throws -> BackupCode? {
+        let activeCodes = try await BackupCode.query(on: req.db)
+            .filter(\.$user.$id == userId)
+            .filter(\.$usedAt == nil)
+            .all()
+
+        for backupCode in activeCodes {
+            let matches = try await req.passwordHasher.verify(
+                password: code,
+                against: backupCode.codeHash,
+                on: req.eventLoop
+            )
+            if matches {
+                return backupCode
+            }
+        }
+
+        return nil
+    }
+
+    private func maskedEmail(_ email: String) -> String {
+        let parts = email.split(separator: "@", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return email }
+
+        let local = parts[0]
+        let prefix = local.prefix(1)
+        return "\(prefix)***@\(parts[1])"
+    }
+
+    private func maskedPhoneNumber(_ phoneNumber: String) -> String {
+        let visiblePrefix = phoneNumber.prefix(2)
+        let visibleSuffix = phoneNumber.suffix(2)
+        let maskedCount = max(0, phoneNumber.count - 4)
+        return "\(visiblePrefix)\(String(repeating: "*", count: maskedCount))\(visibleSuffix)"
     }
 
     private func ensurePhoneNumberIsAvailable(_ phoneNumber: String, excluding userID: UUID?) async throws {
@@ -1072,6 +1568,16 @@ struct AuthService {
         return String(format: "%06d", value)
     }
 
+    private func generateBackupCode() -> String {
+        let key = SymmetricKey(size: .bits256)
+        let hex = key.withUnsafeBytes { bytes in
+            Data(bytes.prefix(4)).map { String(format: "%02X", $0) }.joined()
+        }
+        let prefix = hex.prefix(4)
+        let suffix = hex.suffix(4)
+        return "\(prefix)-\(suffix)"
+    }
+
     private func sha256(_ input: String) -> String {
         let digest = SHA256.hash(data: Data(input.utf8))
         return digest.map { String(format: "%02hhx", $0) }.joined()
@@ -1081,6 +1587,18 @@ struct AuthService {
         let normalized = code.trimmingCharacters(in: .whitespacesAndNewlines)
         guard normalized.count == 6, normalized.allSatisfy(\.isNumber) else {
             throw Abort(.badRequest, reason: reason)
+        }
+
+        return normalized
+    }
+
+    private func normalizeBackupCode(_ code: String) throws -> String {
+        let normalized = code
+            .uppercased()
+            .filter { $0.isLetter || $0.isNumber }
+
+        guard normalized.count == 8 else {
+            throw Abort(.badRequest, reason: "Backup code must be 8 characters")
         }
 
         return normalized
