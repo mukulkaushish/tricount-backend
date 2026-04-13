@@ -402,11 +402,23 @@ struct AuthService {
         )
         try await challenge.save(on: req.db)
 
+        let otpauthURL = TOTPService.otpauthURL(secret: secret, issuer: issuer, accountName: user.email)
+        req.logSensitiveDevelopmentValue(
+            "Authenticator app MFA setup generated",
+            metadata: [
+                "userId": .string(userId.uuidString),
+                "email": .string(user.email),
+                "issuer": .string(issuer),
+                "secret": .string(secret),
+                "otpauthURL": .string(otpauthURL)
+            ]
+        )
+
         return AuthenticatorAppMFASetupResponse(
             secret: secret,
             issuer: issuer,
             accountName: user.email,
-            otpauthURL: TOTPService.otpauthURL(secret: secret, issuer: issuer, accountName: user.email),
+            otpauthURL: otpauthURL,
             digits: TOTPService.digits,
             period: TOTPService.period
         )

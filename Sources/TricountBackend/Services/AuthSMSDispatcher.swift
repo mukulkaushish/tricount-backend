@@ -6,8 +6,10 @@ protocol AuthSMSDispatching: Sendable {
 
 struct LoggingAuthSMSDispatcher: AuthSMSDispatching {
     let logger: Logger
+    let environment: Environment
 
     func sendPhoneVerificationOTP(to phoneNumber: String, code: String) async throws {
+        guard environment == .development else { return }
         logger.info(
             "Phone verification OTP generated",
             metadata: [
@@ -26,7 +28,10 @@ extension Application {
     var authSMSDispatcherFactory: @Sendable (Request) -> any AuthSMSDispatching {
         get {
             self.storage[AuthSMSDispatcherFactoryKey.self] ?? { request in
-                LoggingAuthSMSDispatcher(logger: request.logger)
+                LoggingAuthSMSDispatcher(
+                    logger: request.logger,
+                    environment: request.application.environment
+                )
             }
         }
         set {

@@ -19,6 +19,15 @@ extension Request {
         application.environment == .production
     }
 
+    var isDevelopmentEnvironment: Bool {
+        application.environment == .development
+    }
+
+    func logSensitiveDevelopmentValue(_ message: Logger.Message, metadata: Logger.Metadata = [:]) {
+        guard isDevelopmentEnvironment else { return }
+        logger.info(message, metadata: metadata)
+    }
+
     func requireUUIDParameter(_ name: String) throws -> UUID {
         guard let rawValue = parameters.get(name),
               let value = UUID(uuidString: rawValue) else {

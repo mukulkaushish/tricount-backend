@@ -9,6 +9,7 @@ protocol AuthEmailDispatching: Sendable {
 
 struct LoggingAuthEmailDispatcher: AuthEmailDispatching {
     let logger: Logger
+    let environment: Environment
 
     func sendVerificationOTP(to email: String, code: String, displayName: String) async throws {
         log(codeType: "Email verification OTP generated", email: email, code: code, displayName: displayName)
@@ -27,6 +28,7 @@ struct LoggingAuthEmailDispatcher: AuthEmailDispatching {
     }
 
     private func log(codeType: String, email: String, code: String, displayName: String) {
+        guard environment == .development else { return }
         logger.info(
             "\(codeType)",
             metadata: [
@@ -46,7 +48,10 @@ extension Application {
     var authEmailDispatcherFactory: @Sendable (Request) -> any AuthEmailDispatching {
         get {
             self.storage[AuthEmailDispatcherFactoryKey.self] ?? { request in
-                LoggingAuthEmailDispatcher(logger: request.logger)
+                LoggingAuthEmailDispatcher(
+                    logger: request.logger,
+                    environment: request.application.environment
+                )
             }
         }
         set {
