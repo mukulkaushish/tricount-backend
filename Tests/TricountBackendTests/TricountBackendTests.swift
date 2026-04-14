@@ -399,11 +399,14 @@ struct TricountBackendTests {
 
             let htmlURL = outputDirectory.appendingPathComponent("index.html")
             let html = try String(contentsOf: htmlURL, encoding: .utf8)
+            #expect(html.contains("Full Postman Collection"))
             #expect(html.contains("Session"))
             #expect(html.contains("Account"))
             #expect(html.contains("MFA Login"))
             #expect(html.contains("MFA Settings"))
             #expect(html.contains("Passkey Management"))
+            #expect(html.contains("/docs/Tricount-Backend.Auth-Session.postman_collection.json"))
+            #expect(html.contains("/docs/Tricount-Backend.Auth-MFA-Settings.postman_collection.json"))
             #expect(html.contains("nav-section-title"))
         }
     }

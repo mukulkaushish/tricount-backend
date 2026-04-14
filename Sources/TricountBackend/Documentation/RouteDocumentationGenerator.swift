@@ -694,6 +694,35 @@ struct RouteDocumentationGenerator {
         html += "  </div>\n"
         html += "</div>\n"
 
+        html += "<div class=\"download-section\">\n"
+        html += "  <div class=\"download-section-title\">Full API</div>\n"
+        html += "  <div class=\"download-grid\">\n"
+        html += renderDownloadCard(
+            title: "Full Postman Collection",
+            detail: "\(snapshot.routeCount) routes",
+            href: "/docs/Tricount-Backend.postman_collection.json"
+        )
+        html += "  </div>\n"
+        html += "</div>\n"
+
+        for group in groups {
+            let groupArtifacts = sectionArtifacts.filter { $0.groupSlug == group.slug }
+            guard !groupArtifacts.isEmpty else { continue }
+
+            html += "<div class=\"download-section\">\n"
+            html += "  <div class=\"download-section-title\">\(escapeHTML(group.title))</div>\n"
+            html += "  <div class=\"download-grid\">\n"
+            for artifact in groupArtifacts {
+                html += renderDownloadCard(
+                    title: artifact.sectionTitle ?? artifact.title,
+                    detail: "\(artifact.routeCount) routes",
+                    href: "/docs/\(artifact.fileName)"
+                )
+            }
+            html += "  </div>\n"
+            html += "</div>\n"
+        }
+
         // --- Environment Variables Legend (Postman {{variable}} syntax) ---
         html += "<div class=\"env-legend\">\n"
         html += "  <div class=\"env-legend-title\">"
