@@ -10,7 +10,9 @@ struct AuthMFALoginController: DocumentedRouteCollection {
         routes.postData("mfa", "passkeys", "authenticate", "options", use: beginPasskeyMFALogin)
         routes.postData("mfa", "passkeys", "authenticate", "verify", use: finishPasskeyMFALogin)
         routes.postData("passkeys", "authenticate", "options", use: beginPasskeyAuthentication)
+            .documentedSection(.authSession)
         routes.postData("passkeys", "authenticate", "verify", use: finishPasskeyAuthentication)
+            .documentedSection(.authSession)
     }
 
     @Sendable

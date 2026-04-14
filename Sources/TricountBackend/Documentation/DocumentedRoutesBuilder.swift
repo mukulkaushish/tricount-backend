@@ -7,6 +7,21 @@ extension Route {
         get { userInfo[routeDocumentationUserInfoKey] as? RouteDocumentationMetadata }
         set { userInfo[routeDocumentationUserInfoKey] = newValue }
     }
+
+    @discardableResult
+    func documentedSection(_ section: RouteDocumentationSection) -> Route {
+        guard let metadata = routeDocumentationMetadata else {
+            return self
+        }
+
+        routeDocumentationMetadata = RouteDocumentationMetadata(
+            auth: metadata.auth,
+            section: section,
+            requestBody: metadata.requestBody,
+            successResponse: metadata.successResponse
+        )
+        return self
+    }
 }
 
 extension RoutesBuilder {
@@ -18,10 +33,16 @@ extension RoutesBuilder {
 struct DocumentedRoutesBuilder {
     private let base: any RoutesBuilder
     private let defaultAuth: RouteDocumentationAuth
+    private let defaultSection: RouteDocumentationSection?
 
-    init(base: any RoutesBuilder, defaultAuth: RouteDocumentationAuth = .none) {
+    init(
+        base: any RoutesBuilder,
+        defaultAuth: RouteDocumentationAuth = .none,
+        defaultSection: RouteDocumentationSection? = nil
+    ) {
         self.base = base
         self.defaultAuth = defaultAuth
+        self.defaultSection = defaultSection
     }
 
     func grouped(_ path: PathComponent...) -> DocumentedRoutesBuilder {
@@ -29,15 +50,19 @@ struct DocumentedRoutesBuilder {
     }
 
     func grouped(_ path: [PathComponent]) -> DocumentedRoutesBuilder {
-        DocumentedRoutesBuilder(base: base.grouped(path), defaultAuth: defaultAuth)
+        DocumentedRoutesBuilder(base: base.grouped(path), defaultAuth: defaultAuth, defaultSection: defaultSection)
     }
 
     func grouped(_ middleware: any Middleware...) -> DocumentedRoutesBuilder {
-        DocumentedRoutesBuilder(base: base.grouped(middleware), defaultAuth: defaultAuth)
+        DocumentedRoutesBuilder(base: base.grouped(middleware), defaultAuth: defaultAuth, defaultSection: defaultSection)
     }
 
     func bearerProtected() -> DocumentedRoutesBuilder {
-        DocumentedRoutesBuilder(base: base.grouped(JWTAuthMiddleware()), defaultAuth: .bearer)
+        DocumentedRoutesBuilder(base: base.grouped(JWTAuthMiddleware()), defaultAuth: .bearer, defaultSection: defaultSection)
+    }
+
+    func section(_ section: RouteDocumentationSection) -> DocumentedRoutesBuilder {
+        DocumentedRoutesBuilder(base: base, defaultAuth: defaultAuth, defaultSection: section)
     }
 
     @discardableResult
@@ -65,6 +90,7 @@ struct DocumentedRoutesBuilder {
     ) -> Route {
         let metadata = RouteDocumentationMetadata(
             auth: defaultAuth,
+            section: defaultSection,
             requestBody: nil,
             successResponse: .raw(ResponseBody.self, status: status)
         )
@@ -100,6 +126,7 @@ struct DocumentedRoutesBuilder {
     ) -> Route {
         let metadata = RouteDocumentationMetadata(
             auth: defaultAuth,
+            section: defaultSection,
             requestBody: nil,
             successResponse: .raw(ResponseBody.self, status: status)
         )
@@ -127,6 +154,7 @@ struct DocumentedRoutesBuilder {
     ) -> Route {
         let metadata = RouteDocumentationMetadata(
             auth: defaultAuth,
+            section: defaultSection,
             requestBody: .json(RequestBody.self),
             successResponse: .raw(ResponseBody.self, status: status)
         )
@@ -155,6 +183,7 @@ struct DocumentedRoutesBuilder {
     ) -> Route {
         let metadata = RouteDocumentationMetadata(
             auth: defaultAuth,
+            section: defaultSection,
             requestBody: .json(RequestBody.self),
             successResponse: .raw(ResponseBody.self, status: status)
         )
@@ -183,6 +212,7 @@ struct DocumentedRoutesBuilder {
     ) -> Route {
         let metadata = RouteDocumentationMetadata(
             auth: defaultAuth,
+            section: defaultSection,
             requestBody: nil,
             successResponse: .raw(ResponseBody.self, status: status)
         )
@@ -210,6 +240,7 @@ struct DocumentedRoutesBuilder {
     ) -> Route {
         let metadata = RouteDocumentationMetadata(
             auth: defaultAuth,
+            section: defaultSection,
             requestBody: nil,
             successResponse: .empty(status: status)
         )
@@ -237,6 +268,7 @@ struct DocumentedRoutesBuilder {
     ) -> Route {
         let metadata = RouteDocumentationMetadata(
             auth: defaultAuth,
+            section: defaultSection,
             requestBody: nil,
             successResponse: .empty(status: status)
         )

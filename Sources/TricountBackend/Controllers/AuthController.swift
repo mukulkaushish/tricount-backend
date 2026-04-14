@@ -8,12 +8,12 @@ struct AuthController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
         let auth = routes.documented().grouped("auth")
 
-        try AuthSessionController().boot(routes: auth)
-        try AuthMFALoginController().boot(routes: auth)
+        try AuthSessionController().boot(routes: auth.section(.authSession))
+        try AuthMFALoginController().boot(routes: auth.section(.authMFALogin))
 
         let protected = auth.bearerProtected()
-        try AuthAccountController().boot(routes: protected)
-        try AuthMFASettingsController().boot(routes: protected)
-        try AuthPasskeyManagementController().boot(routes: protected)
+        try AuthAccountController().boot(routes: protected.section(.authAccount))
+        try AuthMFASettingsController().boot(routes: protected.section(.authMFASettings))
+        try AuthPasskeyManagementController().boot(routes: protected.section(.authPasskeyManagement))
     }
 }

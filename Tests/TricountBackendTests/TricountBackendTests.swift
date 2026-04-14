@@ -343,10 +343,20 @@ struct TricountBackendTests {
         try await withApp { app in
             let outputDirectory = app.routeDocumentationOutputDirectory
             let postmanURL = outputDirectory.appendingPathComponent("Tricount-Backend.postman_collection.json")
+            let authSessionPostmanURL = outputDirectory.appendingPathComponent("Tricount-Backend.Auth-Session.postman_collection.json")
+            let authAccountPostmanURL = outputDirectory.appendingPathComponent("Tricount-Backend.Auth-Account.postman_collection.json")
+            let authMFALoginPostmanURL = outputDirectory.appendingPathComponent("Tricount-Backend.Auth-MFA-Login.postman_collection.json")
+            let authMFASettingsPostmanURL = outputDirectory.appendingPathComponent("Tricount-Backend.Auth-MFA-Settings.postman_collection.json")
+            let authPasskeyManagementPostmanURL = outputDirectory.appendingPathComponent("Tricount-Backend.Auth-Passkey-Management.postman_collection.json")
             let markdownURL = outputDirectory.appendingPathComponent("routes.md")
 
             #expect(FileManager.default.fileExists(atPath: postmanURL.path))
-            #expect(FileManager.default.fileExists(atPath: markdownURL.path))
+            #expect(FileManager.default.fileExists(atPath: authSessionPostmanURL.path))
+            #expect(FileManager.default.fileExists(atPath: authAccountPostmanURL.path))
+            #expect(FileManager.default.fileExists(atPath: authMFALoginPostmanURL.path))
+            #expect(FileManager.default.fileExists(atPath: authMFASettingsPostmanURL.path))
+            #expect(FileManager.default.fileExists(atPath: authPasskeyManagementPostmanURL.path))
+            #expect(!FileManager.default.fileExists(atPath: markdownURL.path))
 
             // Validate Postman collection structure
             let postmanData = try Data(contentsOf: postmanURL)
@@ -381,24 +391,20 @@ struct TricountBackendTests {
             let items = try #require(root["item"] as? [[String: Any]])
             #expect(!items.isEmpty)
 
-            let markdown = try String(contentsOf: markdownURL, encoding: .utf8)
-            #expect(markdown.contains("| POST | /v1/auth/login | none | 200 AuthenticationResultResponse |"))
-            #expect(markdown.contains("## POST /v1/auth/login"))
-            #expect(markdown.contains("## POST /v1/auth/reset-password"))
-            #expect(markdown.contains("## POST /v1/auth/mfa/email/verify"))
-            #expect(markdown.contains("## POST /v1/auth/mfa/authenticator-app/setup"))
-            #expect(markdown.contains("## POST /v1/auth/mfa/authenticator-app/verify"))
-            #expect(markdown.contains("## POST /v1/auth/phone/request-verification"))
-            #expect(markdown.contains("## GET /v1/auth/passkeys"))
-            #expect(markdown.contains("## POST /v1/auth/passkeys/remove"))
-            #expect(markdown.contains("## POST /v1/auth/passkeys/reset"))
-            #expect(markdown.contains("| email | string | yes |"))
-            #expect(markdown.contains("| user.avatarUrl | string? | no |"))
-            #expect(markdown.contains("| user.phoneNumber | string? | no |"))
-            #expect(markdown.contains("| user.phoneVerifiedAt | string? | no |"))
-            #expect(markdown.contains("## POST /v1/auth/passkeys/register/options"))
-            #expect(markdown.contains("## POST /v1/auth/passkeys/authenticate/verify"))
-            #expect(!markdown.contains("| [] | object | yes |"))
+            let authSessionData = try Data(contentsOf: authSessionPostmanURL)
+            let authSessionObject = try JSONSerialization.jsonObject(with: authSessionData)
+            let authSessionRoot = try #require(authSessionObject as? [String: Any])
+            let authSessionInfo = try #require(authSessionRoot["info"] as? [String: Any])
+            #expect(authSessionInfo["name"] as? String == "Tricount Backend - Auth - Session")
+
+            let htmlURL = outputDirectory.appendingPathComponent("index.html")
+            let html = try String(contentsOf: htmlURL, encoding: .utf8)
+            #expect(html.contains("Session"))
+            #expect(html.contains("Account"))
+            #expect(html.contains("MFA Login"))
+            #expect(html.contains("MFA Settings"))
+            #expect(html.contains("Passkey Management"))
+            #expect(html.contains("nav-section-title"))
         }
     }
 

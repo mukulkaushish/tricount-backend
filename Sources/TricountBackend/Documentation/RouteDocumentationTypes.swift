@@ -13,8 +13,22 @@ enum RouteDocumentationEnvelope: String, Sendable {
 
 struct RouteDocumentationMetadata: Sendable {
     let auth: RouteDocumentationAuth
+    let section: RouteDocumentationSection?
     let requestBody: RouteDocumentationRequestBody?
     let successResponse: RouteDocumentationResponse
+}
+
+struct RouteDocumentationSection: Sendable, Hashable {
+    let slug: String
+    let title: String
+}
+
+extension RouteDocumentationSection {
+    static let authSession = RouteDocumentationSection(slug: "session", title: "Session")
+    static let authAccount = RouteDocumentationSection(slug: "account", title: "Account")
+    static let authMFALogin = RouteDocumentationSection(slug: "mfa-login", title: "MFA Login")
+    static let authMFASettings = RouteDocumentationSection(slug: "mfa-settings", title: "MFA Settings")
+    static let authPasskeyManagement = RouteDocumentationSection(slug: "passkey-management", title: "Passkey Management")
 }
 
 struct RouteDocumentationRequestBody: Sendable {
