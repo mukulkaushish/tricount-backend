@@ -64,6 +64,8 @@ struct RemovePasskeyRequest: Content {
 }
 
 struct PasskeyCredentialDTO: Content {
+    nonisolated(unsafe) private static let dateFormatter: ISO8601DateFormatter = ISO8601DateFormatter()
+
     let id: String
     let credentialId: String
     let transports: [String]
@@ -71,12 +73,11 @@ struct PasskeyCredentialDTO: Content {
     let lastUsedAt: String?
 
     init(from credential: PasskeyCredential) {
-        let formatter = ISO8601DateFormatter()
         self.id = credential.id?.uuidString ?? ""
         self.credentialId = credential.credentialId
         self.transports = credential.transports
-        self.createdAt = formatter.string(from: credential.createdAt ?? Date())
-        self.lastUsedAt = credential.lastUsedAt.map(formatter.string(from:))
+        self.createdAt = Self.dateFormatter.string(from: credential.createdAt ?? Date())
+        self.lastUsedAt = credential.lastUsedAt.map(Self.dateFormatter.string(from:))
     }
 }
 

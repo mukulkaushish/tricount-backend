@@ -1,6 +1,10 @@
 import Vapor
 import Fluent
 
+private struct CleanupTaskKey: StorageKey {
+    typealias Value = Task<Void, Never>
+}
+
 /// Purges expired OTP codes, challenges, and revoked refresh tokens.
 ///
 /// Runs as a recurring background task every hour. Deletes records whose
@@ -92,7 +96,7 @@ private struct CleanupLifecycle: LifecycleHandler, Sendable {
         let grace = ExpiredRecordCleanupService.gracePeriodMinutes
         application.logger.info("Cleanup cron started — interval: \(interval)min, grace: \(grace)min")
 
-        Task {
+        let task = Task {
             // Run once immediately on boot
             await service.cleanupAll()
 
@@ -104,5 +108,11 @@ private struct CleanupLifecycle: LifecycleHandler, Sendable {
                 await service.cleanupAll()
             }
         }
+        application.storage[CleanupTaskKey.self] = task
+    }
+
+    func shutdown(_ application: Application) {
+        application.storage[CleanupTaskKey.self]?.cancel()
+        application.storage[CleanupTaskKey.self] = nil
     }
 }

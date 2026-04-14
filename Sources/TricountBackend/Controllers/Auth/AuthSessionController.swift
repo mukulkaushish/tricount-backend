@@ -26,12 +26,12 @@ struct AuthSessionController: DocumentedRouteCollection {
 
     @Sendable
     func login(req: Request, body: LoginRequest) async throws -> AuthenticationResultResponse {
-        try await req.authService.login(dto: body)
+        try await req.authServices.session.login(dto: body)
     }
 
     @Sendable
     func register(req: Request, body: RegisterRequest) async throws -> AuthResponse {
-        try await req.authService.register(dto: body)
+        try await req.authServices.session.register(dto: body)
     }
 
     @Sendable
@@ -41,27 +41,27 @@ struct AuthSessionController: DocumentedRouteCollection {
             throw Abort(.badRequest, reason: "Invalid email format")
         }
 
-        try await req.authService.forgotPassword(dto: body)
+        try await req.authServices.session.forgotPassword(dto: body)
         return MessageResponse(message: "If the account exists, a password reset link will be sent.")
     }
 
     @Sendable
     func resetPassword(req: Request, body: ResetPasswordRequest) async throws -> MessageResponse {
-        try await req.authService.resetPassword(dto: body)
+        try await req.authServices.session.resetPassword(dto: body)
     }
 
     @Sendable
     func googleSignIn(req: Request, body: GoogleLoginRequest) async throws -> AuthenticationResultResponse {
-        try await req.authService.googleSignIn(dto: body)
+        try await req.authServices.session.googleSignIn(dto: body)
     }
 
     @Sendable
     func appleSignIn(req: Request, body: AppleLoginRequest) async throws -> AuthenticationResultResponse {
-        try await req.authService.appleSignIn(dto: body)
+        try await req.authServices.session.appleSignIn(dto: body)
     }
 
     @Sendable
     func refresh(req: Request, body: RefreshTokenRequest) async throws -> TokenRefreshResponse {
-        try await req.authService.refresh(dto: body)
+        try await req.authServices.session.refresh(dto: body)
     }
 }

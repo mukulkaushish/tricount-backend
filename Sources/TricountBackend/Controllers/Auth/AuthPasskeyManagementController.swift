@@ -12,22 +12,22 @@ struct AuthPasskeyManagementController: DocumentedRouteCollection {
 
     @Sendable
     func listPasskeys(req: Request) async throws -> [PasskeyCredentialDTO] {
-        try await req.authService.listPasskeys()
+        try await req.authServices.passkeys.list()
     }
 
     @Sendable
     func removePasskey(req: Request, body: RemovePasskeyRequest) async throws -> MessageResponse {
-        try await req.authService.removePasskey(dto: body)
+        try await req.authServices.passkeys.remove(dto: body)
     }
 
     @Sendable
     func resetPasskeys(req: Request) async throws -> MessageResponse {
-        try await req.authService.resetPasskeys()
+        try await req.authServices.passkeys.reset()
     }
 
     @Sendable
     func beginPasskeyRegistration(req: Request) async throws -> PasskeyRegistrationOptionsResponse {
-        try await req.authService.beginPasskeyRegistration()
+        try await req.authServices.passkeys.beginRegistration()
     }
 
     @Sendable
@@ -35,6 +35,6 @@ struct AuthPasskeyManagementController: DocumentedRouteCollection {
         req: Request,
         body: PasskeyRegistrationVerificationRequest
     ) async throws -> PasskeyCredentialDTO {
-        try await req.authService.finishPasskeyRegistration(dto: body)
+        try await req.authServices.passkeys.finishRegistration(dto: body)
     }
 }

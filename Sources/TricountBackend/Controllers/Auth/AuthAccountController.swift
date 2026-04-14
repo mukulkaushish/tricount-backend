@@ -19,31 +19,31 @@ struct AuthAccountController: DocumentedRouteCollection {
 
     @Sendable
     func me(req: Request) async throws -> UserDTO {
-        UserDTO(from: try await req.authService.currentUser())
+        UserDTO(from: try await req.authServices.account.currentUser())
     }
 
     @Sendable
     func verifyGoogleProfile(req: Request, body: VerifyProfileRequest) async throws -> UserDTO {
-        try await req.authService.verifyGoogleProfile(dto: body)
+        try await req.authServices.account.verifyGoogleProfile(dto: body)
     }
 
     @Sendable
     func verifyAppleProfile(req: Request, body: VerifyProfileRequest) async throws -> UserDTO {
-        try await req.authService.verifyAppleProfile(dto: body)
+        try await req.authServices.account.verifyAppleProfile(dto: body)
     }
 
     @Sendable
     func requestEmailVerificationOTP(req: Request) async throws -> MessageResponse {
-        try await req.authService.requestEmailVerificationOTP()
+        try await req.authServices.account.requestEmailVerificationOTP()
     }
 
     @Sendable
     func confirmEmailVerificationOTP(req: Request, body: VerifyEmailOTPRequest) async throws -> UserDTO {
-        try await req.authService.confirmEmailVerificationOTP(dto: body)
+        try await req.authServices.account.confirmEmailVerificationOTP(dto: body)
     }
 
     @Sendable
     func logout(req: Request) async throws {
-        try await req.authService.logout()
+        try await req.authServices.account.logout()
     }
 }

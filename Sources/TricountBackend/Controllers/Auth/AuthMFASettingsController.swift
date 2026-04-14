@@ -21,32 +21,32 @@ struct AuthMFASettingsController: DocumentedRouteCollection {
 
     @Sendable
     func enableMFA(req: Request, body: EnableMFARequest) async throws -> UserDTO {
-        try await req.authService.enableMFA(dto: body)
+        try await req.authServices.mfaSettings.enable(dto: body)
     }
 
     @Sendable
     func disableMFA(req: Request) async throws -> UserDTO {
-        try await req.authService.disableMFA()
+        try await req.authServices.mfaSettings.disable()
     }
 
     @Sendable
     func requestEmailMFAEnable(req: Request) async throws -> MessageResponse {
-        try await req.authService.requestEmailMFAEnable()
+        try await req.authServices.mfaSettings.requestEmailEnable()
     }
 
     @Sendable
     func confirmEmailMFAEnable(req: Request, body: ConfirmEmailMFAEnableRequest) async throws -> UserDTO {
-        try await req.authService.confirmEmailMFAEnable(dto: body)
+        try await req.authServices.mfaSettings.confirmEmailEnable(dto: body)
     }
 
     @Sendable
     func disableEmailMFA(req: Request) async throws -> UserDTO {
-        try await req.authService.disableEmailMFA()
+        try await req.authServices.mfaSettings.disableEmail()
     }
 
     @Sendable
     func beginAuthenticatorAppMFASetup(req: Request) async throws -> AuthenticatorAppMFASetupResponse {
-        try await req.authService.beginAuthenticatorAppMFASetup()
+        try await req.authServices.mfaSettings.beginAuthenticatorAppSetup()
     }
 
     @Sendable
@@ -54,22 +54,22 @@ struct AuthMFASettingsController: DocumentedRouteCollection {
         req: Request,
         body: ConfirmEmailMFAEnableRequest
     ) async throws -> UserDTO {
-        try await req.authService.confirmAuthenticatorAppMFAEnable(dto: body)
+        try await req.authServices.mfaSettings.confirmAuthenticatorAppEnable(dto: body)
     }
 
     @Sendable
     func disableAuthenticatorAppMFA(req: Request) async throws -> UserDTO {
-        try await req.authService.disableAuthenticatorAppMFA()
+        try await req.authServices.mfaSettings.disableAuthenticatorApp()
     }
 
     @Sendable
     func generateBackupCodes(req: Request) async throws -> BackupCodesResponse {
-        try await req.authService.generateBackupCodes()
+        try await req.authServices.mfaSettings.generateBackupCodes()
     }
 
     @Sendable
     func regenerateBackupCodes(req: Request) async throws -> BackupCodesResponse {
-        try await req.authService.regenerateBackupCodes()
+        try await req.authServices.mfaSettings.regenerateBackupCodes()
     }
 
     @Sendable
@@ -77,7 +77,7 @@ struct AuthMFASettingsController: DocumentedRouteCollection {
         req: Request,
         body: SetupPhoneVerificationRequest
     ) async throws -> MessageResponse {
-        try await req.authService.requestPhoneVerification(dto: body)
+        try await req.authServices.mfaSettings.requestPhoneVerification(dto: body)
     }
 
     @Sendable
@@ -85,11 +85,11 @@ struct AuthMFASettingsController: DocumentedRouteCollection {
         req: Request,
         body: ConfirmPhoneVerificationRequest
     ) async throws -> UserDTO {
-        try await req.authService.confirmPhoneVerification(dto: body)
+        try await req.authServices.mfaSettings.confirmPhoneVerification(dto: body)
     }
 
     @Sendable
     func removePhoneNumber(req: Request) async throws -> UserDTO {
-        try await req.authService.removePhoneNumber()
+        try await req.authServices.mfaSettings.removePhoneNumber()
     }
 }

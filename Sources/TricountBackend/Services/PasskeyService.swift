@@ -237,24 +237,14 @@ struct PasskeyService {
     }
 
     private func configuration() throws -> PasskeyConfiguration {
-        let rpId = Environment.get("PASSKEY_RP_ID") ?? "localhost"
-        let rpName = Environment.get("PASSKEY_RP_NAME") ?? "Tricount"
-        let timeoutMilliseconds = Environment.get("PASSKEY_TIMEOUT_MS").flatMap(Int.init) ?? 60_000
-        let challengeLifetime = Environment.get("PASSKEY_CHALLENGE_TTL_SECONDS").flatMap(Double.init) ?? 600
-        let configuredOrigins = Environment.get("PASSKEY_ALLOWED_ORIGINS")
-            .map { value in
-                value
-                    .split(separator: ",")
-                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
-            } ?? []
+        let runtimeConfig = req.application.runtimeConfiguration.passkeys
 
         return PasskeyConfiguration(
-            rpId: rpId,
-            rpName: rpName,
-            allowedOrigins: Set(configuredOrigins),
-            timeoutMilliseconds: timeoutMilliseconds,
-            challengeLifetime: challengeLifetime
+            rpId: runtimeConfig.rpId,
+            rpName: runtimeConfig.rpName,
+            allowedOrigins: runtimeConfig.allowedOrigins,
+            timeoutMilliseconds: runtimeConfig.timeoutMilliseconds,
+            challengeLifetime: runtimeConfig.challengeLifetime
         )
     }
 

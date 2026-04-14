@@ -7,6 +7,7 @@ This document describes the intended structure for the auth module in `tricount-
 - Keep route ownership small and obvious.
 - Keep controllers thin and focused on HTTP transport concerns.
 - Keep business logic in services.
+- Keep controller-facing services aligned with route capability ownership.
 - Keep persistence logic in Fluent models and migrations.
 - Preserve the public API contract while allowing the codebase to scale.
 
@@ -25,6 +26,8 @@ This structure follows two practical rules:
 
 1. Group routes by capability, not by HTTP verb or model.
 2. Treat controllers as adapters from HTTP to application services.
+
+Controllers should use `req.authServices.<capability>` rather than depending on the internal `AuthService` shape directly.
 
 ## Responsibility Boundaries
 
@@ -61,16 +64,19 @@ Models should remain persistence-focused:
 - relationships
 - lightweight computed helpers tied to stored state
 
-## Future Refactor Direction
+## Internal Workflow Structure
 
-`AuthService` still contains multiple capabilities. To keep scaling cleanly, future work should split it by bounded context:
+`AuthService` is now organized into bounded workflow files:
 
-- `AuthSessionService`
-- `AuthProfileService`
-- `AuthMFAService`
-- `AuthRecoveryService`
+- `AuthService.swift`: shared dependencies, security helpers, validation helpers
+- `AuthService+Session.swift`: login, registration, social sign-in, token issuance, passkey auth
+- `AuthService+Account.swift`: current-user and profile/email verification flows
+- `AuthService+Recovery.swift`: forgot-password and password-reset flows
+- `AuthService+MFA.swift`: MFA setup, MFA login verification, phone verification, backup codes, passkey factor lifecycle
 
-When that happens, keep `Request` factories as the composition point so controllers still read clearly.
+The repo still uses `AuthServices` as the controller-facing composition point, so route handlers stay stable even when internal auth workflows are reorganized.
+
+If one workflow file starts accumulating multiple reasons to change, the next step is to extract it into a dedicated internal service type rather than growing `AuthService` again.
 
 ## Endpoint Ownership Map
 
@@ -115,6 +121,8 @@ When that happens, keep `Request` factories as the composition point so controll
 
 - Keep DTOs in `DTOs/` until they become large enough to justify feature folders.
 - Add a new RouteCollection before expanding an existing one past a single concern.
+- Add new auth workflow code to the matching `AuthService+<Capability>.swift` file before touching unrelated auth files.
+- Keep runtime configuration reads out of auth services; prefer `Application.runtimeConfiguration`.
 - Prefer additive migrations for schema changes.
 - Keep route paths stable even if internals are reorganized.
 
@@ -122,3 +130,5 @@ When that happens, keep `Request` factories as the composition point so controll
 
 - Vapor routing docs: <https://docs.vapor.codes/de/basics/routing/>
 - Swift API Design Guidelines: <https://www.swift.org/documentation/api-design-guidelines/>
+- Spring Boot structuring guidance: <https://docs.spring.io/spring-boot/docs/2.6.6/reference/html/using.html>
+- Rails project structure and autoloading: <https://guides.rubyonrails.org/v7.0.0/autoloading_and_reloading_constants.html>

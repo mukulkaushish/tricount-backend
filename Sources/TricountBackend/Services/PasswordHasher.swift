@@ -20,7 +20,7 @@ struct PasswordHasher: Sendable {
     func hash(_ password: String, on eventLoop: any EventLoop) async throws -> String {
         try await app.threadPool.runIfActive(eventLoop: eventLoop) {
             let sodium = Sodium()
-            let params = Self.params(for: self.app.environment)
+            let params = Self.params(for: self.app)
             guard let hash = sodium.pwHash.str(
                 passwd: Array(password.utf8),
                 opsLimit: params.opsLimit,
@@ -59,12 +59,13 @@ struct PasswordHasher: Sendable {
     ///
     /// Override with `ARGON2_OPS_LIMIT` and `ARGON2_MEM_LIMIT` env vars.
     /// Overrides must meet or exceed the environment's baseline.
-    static func params(for environment: Environment) -> Params {
-        let baseline = baselineParams(for: environment)
-
-        if let ops = Environment.get("ARGON2_OPS_LIMIT").flatMap(Int.init),
-           let mem = Environment.get("ARGON2_MEM_LIMIT").flatMap(Int.init),
-           ops >= baseline.opsLimit, mem >= baseline.memLimit {
+    static func params(for application: Application) -> Params {
+        let baseline = baselineParams(for: application.environment)
+        let runtimeConfiguration = application.runtimeConfiguration
+        if let ops = runtimeConfiguration.passwordHashing.opsLimitOverride,
+           let mem = runtimeConfiguration.passwordHashing.memLimitOverride,
+           ops >= baseline.opsLimit,
+           mem >= baseline.memLimit {
             return Params(opsLimit: ops, memLimit: mem)
         }
 

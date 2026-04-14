@@ -253,7 +253,11 @@ struct DocumentedRoutesBuilder {
         metadata: RouteDocumentationMetadata,
         use closure: @Sendable @escaping (Request) async throws -> Response
     ) -> Route {
-        let route = base.on(method, path, use: closure)
+        let route = base.on(method, path) { request async throws -> Response in
+            let response = try await closure(request)
+            request.applyDevelopmentDebugHeaders(to: response)
+            return response
+        }
         route.routeDocumentationMetadata = metadata
         return route
     }

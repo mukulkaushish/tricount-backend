@@ -288,9 +288,17 @@ struct TricountBackendTests {
         }
     }
 
-    private func withApp(_ test: (Application) async throws -> ()) async throws {
+    private func withApp(
+        _ environment: Environment = .testing,
+        _ test: (Application) async throws -> ()
+    ) async throws {
         await RateLimitStore.shared.reset()
-        let app = try await Application.make(.testing)
+        let app = try await Application.make(environment)
+        app.routeDocumentationOutputDirectory = URL(
+            fileURLWithPath: app.directory.workingDirectory,
+            isDirectory: true
+        )
+        .appendingPathComponent(".build/test-route-docs-\(UUID().uuidString.lowercased())", isDirectory: true)
         try? FileManager.default.removeItem(at: app.routeDocumentationOutputDirectory)
         do {
             try await configure(app)
@@ -354,9 +362,21 @@ struct TricountBackendTests {
             #expect(variableKeys.contains("accessToken"))
             #expect(variableKeys.contains("refreshToken"))
             #expect(variableKeys.contains("otpCode"))
+            #expect(variableKeys.contains("emailOtpCode"))
+            #expect(variableKeys.contains("phoneOtpCode"))
             #expect(variableKeys.contains("idToken"))
             #expect(variableKeys.contains("phoneNumber"))
             #expect(variableKeys.contains("credentialId"))
+
+            let events = try #require(root["event"] as? [[String: Any]])
+            let firstEvent = try #require(events.first)
+            let script = try #require(firstEvent["script"] as? [String: Any])
+            let exec = try #require(script["exec"] as? [String])
+            let execScript = exec.joined(separator: "\n")
+            #expect(execScript.contains("pm.environment.set(key, value)"))
+            #expect(execScript.contains("X-Debug-OTP-Code"))
+            #expect(execScript.contains("X-Debug-OTP-Code-Email"))
+            #expect(execScript.contains("X-Debug-OTP-Code-Phone"))
 
             let items = try #require(root["item"] as? [[String: Any]])
             #expect(!items.isEmpty)
@@ -379,6 +399,36 @@ struct TricountBackendTests {
             #expect(markdown.contains("## POST /v1/auth/passkeys/register/options"))
             #expect(markdown.contains("## POST /v1/auth/passkeys/authenticate/verify"))
             #expect(!markdown.contains("| [] | object | yes |"))
+        }
+    }
+
+    @Test("Development OTP endpoints expose a debug OTP header for Postman")
+    func developmentEmailVerificationOTPExposesDebugHeader() async throws {
+        let email = "debug-otp+\(UUID().uuidString.lowercased())@example.com"
+        let password = "Password1"
+        let emailBox = AuthEmailDeliveryBox()
+
+        try await withApp(.development) { app in
+            app.authEmailDispatcherFactory = { _ in
+                MockAuthEmailDispatcher(box: emailBox)
+            }
+
+            var accessToken = ""
+
+            try await app.testing().test(.POST, "v1/auth/register", beforeRequest: { req in
+                try req.content.encode(RegisterRequest(email: email, password: password, displayName: "Debug OTP"))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .created)
+                accessToken = try res.decodeData(AuthResponse.self).accessToken
+            })
+
+            try await app.testing().test(.POST, "v1/auth/verify-profile/email/request-otp", beforeRequest: { req in
+                req.headers.bearerAuthorization = .init(token: accessToken)
+            }, afterResponse: { res async throws in
+                #expect(res.status == .ok)
+                let otpCode = try #require(await emailBox.currentCode(for: .verification))
+                #expect(res.headers.first(name: "X-Debug-OTP-Code") == otpCode)
+            })
         }
     }
 

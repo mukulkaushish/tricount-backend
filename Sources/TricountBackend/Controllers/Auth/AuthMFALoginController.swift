@@ -15,22 +15,22 @@ struct AuthMFALoginController: DocumentedRouteCollection {
 
     @Sendable
     func verifyEmailMFALogin(req: Request, body: MFALoginVerifyRequest) async throws -> AuthResponse {
-        try await req.authService.verifyEmailMFALogin(dto: body)
+        try await req.authServices.mfaLogin.verifyEmail(dto: body)
     }
 
     @Sendable
     func verifyPhoneMFALogin(req: Request, body: MFALoginVerifyRequest) async throws -> AuthResponse {
-        try await req.authService.verifyPhoneMFALogin(dto: body)
+        try await req.authServices.mfaLogin.verifyPhone(dto: body)
     }
 
     @Sendable
     func verifyAuthenticatorAppMFALogin(req: Request, body: MFALoginVerifyRequest) async throws -> AuthResponse {
-        try await req.authService.verifyAuthenticatorAppMFALogin(dto: body)
+        try await req.authServices.mfaLogin.verifyAuthenticatorApp(dto: body)
     }
 
     @Sendable
     func verifyBackupCodeMFALogin(req: Request, body: MFALoginVerifyRequest) async throws -> AuthResponse {
-        try await req.authService.verifyBackupCodeMFALogin(dto: body)
+        try await req.authServices.mfaLogin.verifyBackupCode(dto: body)
     }
 
     @Sendable
@@ -38,7 +38,7 @@ struct AuthMFALoginController: DocumentedRouteCollection {
         req: Request,
         body: PasskeyMFALoginOptionsRequest
     ) async throws -> PasskeyAuthenticationOptionsResponse {
-        try await req.authService.beginPasskeyMFALogin(dto: body)
+        try await req.authServices.mfaLogin.beginPasskey(dto: body)
     }
 
     @Sendable
@@ -46,7 +46,7 @@ struct AuthMFALoginController: DocumentedRouteCollection {
         req: Request,
         body: PasskeyMFALoginVerificationRequest
     ) async throws -> AuthResponse {
-        try await req.authService.finishPasskeyMFALogin(dto: body)
+        try await req.authServices.mfaLogin.finishPasskey(dto: body)
     }
 
     @Sendable
@@ -54,7 +54,7 @@ struct AuthMFALoginController: DocumentedRouteCollection {
         req: Request,
         body: PasskeyAuthenticationOptionsRequest
     ) async throws -> PasskeyAuthenticationOptionsResponse {
-        try await req.authService.beginPasskeyAuthentication(dto: body)
+        try await req.authServices.session.beginPasskeyAuthentication(dto: body)
     }
 
     @Sendable
@@ -62,6 +62,6 @@ struct AuthMFALoginController: DocumentedRouteCollection {
         req: Request,
         body: PasskeyAuthenticationVerificationRequest
     ) async throws -> AuthenticationResultResponse {
-        try await req.authService.finishPasskeyAuthentication(dto: body)
+        try await req.authServices.session.finishPasskeyAuthentication(dto: body)
     }
 }

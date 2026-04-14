@@ -2,6 +2,8 @@ import Foundation
 import Vapor
 
 struct RouteDocumentationGenerator {
+    nonisolated(unsafe) private static let dateFormatter: ISO8601DateFormatter = ISO8601DateFormatter()
+
     private let application: Application
     private let errorSchema = DocumentationSchemaFactory.make(for: ErrorResponse.self)
 
@@ -46,20 +48,59 @@ struct RouteDocumentationGenerator {
             "script": [
                 "type": "text/javascript",
                 "exec": [
+                    "function setRuntimeVariable(key, value) {",
+                    "    if (typeof value !== 'string' || value.length === 0) {",
+                    "        return;",
+                    "    }",
+                    "    try { pm.collectionVariables.set(key, value); } catch (e) {}",
+                    "    try { pm.environment.set(key, value); } catch (e) {}",
+                    "}",
+                    "",
+                    "var body = null;",
+                    "try { body = pm.response.json(); } catch (e) {}",
+                    "",
                     "if (pm.response.code >= 200 && pm.response.code < 300) {",
-                    "    try {",
-                    "        var json = pm.response.json();",
-                    "        var body = json;",
-                    "        if (body.accessToken) {",
-                    "            pm.collectionVariables.set('accessToken', body.accessToken);",
-                    "        }",
-                    "        if (body.refreshToken) {",
-                    "            pm.collectionVariables.set('refreshToken', body.refreshToken);",
-                    "        }",
-                    "        if (body.mfaChallenge && body.mfaChallenge.challengeToken) {",
-                    "            pm.collectionVariables.set('challengeToken', body.mfaChallenge.challengeToken);",
-                    "        }",
-                    "    } catch(e) {}",
+                    "    if (body && body.accessToken) {",
+                    "        setRuntimeVariable('accessToken', body.accessToken);",
+                    "    }",
+                    "    if (body && body.refreshToken) {",
+                    "        setRuntimeVariable('refreshToken', body.refreshToken);",
+                    "    }",
+                    "    if (body && body.mfaChallenge && body.mfaChallenge.challengeToken) {",
+                    "        setRuntimeVariable('challengeToken', body.mfaChallenge.challengeToken);",
+                    "    }",
+                    "",
+                    "    var otpCode = pm.response.headers.get('X-Debug-OTP-Code');",
+                    "    if (otpCode) {",
+                    "        setRuntimeVariable('otpCode', otpCode);",
+                    "    }",
+                    "",
+                    "    var emailOtpCode = pm.response.headers.get('X-Debug-OTP-Code-Email');",
+                    "    if (emailOtpCode) {",
+                    "        setRuntimeVariable('emailOtpCode', emailOtpCode);",
+                    "    }",
+                    "",
+                    "    var phoneOtpCode = pm.response.headers.get('X-Debug-OTP-Code-Phone');",
+                    "    if (phoneOtpCode) {",
+                    "        setRuntimeVariable('phoneOtpCode', phoneOtpCode);",
+                    "    }",
+                    "",
+                    "    if (!otpCode && emailOtpCode && !phoneOtpCode) {",
+                    "        setRuntimeVariable('otpCode', emailOtpCode);",
+                    "    }",
+                    "    if (!otpCode && phoneOtpCode && !emailOtpCode) {",
+                    "        setRuntimeVariable('otpCode', phoneOtpCode);",
+                    "    }",
+                    "    if (!otpCode && body && body.mfaChallenge && body.mfaChallenge.method === 'email' && emailOtpCode) {",
+                    "        setRuntimeVariable('otpCode', emailOtpCode);",
+                    "    }",
+                    "    if (!otpCode && body && body.mfaChallenge && body.mfaChallenge.method === 'phone' && phoneOtpCode) {",
+                    "        setRuntimeVariable('otpCode', phoneOtpCode);",
+                    "    }",
+                    "",
+                    "    if (body && body.credentialId) {",
+                    "        setRuntimeVariable('credentialId', body.credentialId);",
+                    "    }",
                     "}"
                 ]
             ] as [String: Any]
@@ -90,6 +131,8 @@ struct RouteDocumentationGenerator {
                 ["key": "password", "value": "Test1234", "type": "string"],
                 ["key": "displayName", "value": "Test User", "type": "string"],
                 ["key": "otpCode", "value": "123456", "type": "string"],
+                ["key": "emailOtpCode", "value": "", "type": "string"],
+                ["key": "phoneOtpCode", "value": "", "type": "string"],
                 ["key": "idToken", "value": "", "type": "string"],
                 ["key": "phoneNumber", "value": "+1234567890", "type": "string"],
                 ["key": "credentialId", "value": "", "type": "string"]
@@ -240,7 +283,7 @@ struct RouteDocumentationGenerator {
         return RouteDocumentationSnapshot(
             service: "tricount-backend",
             environment: application.environment.name,
-            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            generatedAt: Self.dateFormatter.string(from: Date()),
             routeCount: routes.count,
             schemas: schemas,
             routes: routes
