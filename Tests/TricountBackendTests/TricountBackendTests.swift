@@ -51,6 +51,7 @@ struct TricountBackendTests {
 
     private actor AuthSMSDeliveryBox {
         private var phoneVerificationCode: String?
+        private var mfaLoginCode: String?
 
         func recordPhoneVerificationCode(_ code: String) {
             self.phoneVerificationCode = code
@@ -58,6 +59,14 @@ struct TricountBackendTests {
 
         func currentPhoneVerificationCode() -> String? {
             phoneVerificationCode
+        }
+
+        func recordMFALoginCode(_ code: String) {
+            self.mfaLoginCode = code
+        }
+
+        func currentMFALoginCode() -> String? {
+            mfaLoginCode
         }
     }
 
@@ -86,6 +95,10 @@ struct TricountBackendTests {
 
         func sendPhoneVerificationOTP(to phoneNumber: String, code: String) async throws {
             await box.recordPhoneVerificationCode(code)
+        }
+
+        func sendMFALoginOTP(to phoneNumber: String, code: String) async throws {
+            await box.recordMFALoginCode(code)
         }
     }
 
@@ -275,9 +288,17 @@ struct TricountBackendTests {
         }
     }
 
-    private func withApp(_ test: (Application) async throws -> ()) async throws {
+    private func withApp(
+        _ environment: Environment = .testing,
+        _ test: (Application) async throws -> ()
+    ) async throws {
         await RateLimitStore.shared.reset()
-        let app = try await Application.make(.testing)
+        let app = try await Application.make(environment)
+        app.routeDocumentationOutputDirectory = URL(
+            fileURLWithPath: app.directory.workingDirectory,
+            isDirectory: true
+        )
+        .appendingPathComponent(".build/test-route-docs-\(UUID().uuidString.lowercased())", isDirectory: true)
         try? FileManager.default.removeItem(at: app.routeDocumentationOutputDirectory)
         do {
             try await configure(app)
@@ -322,10 +343,20 @@ struct TricountBackendTests {
         try await withApp { app in
             let outputDirectory = app.routeDocumentationOutputDirectory
             let postmanURL = outputDirectory.appendingPathComponent("Tricount-Backend.postman_collection.json")
+            let authSessionPostmanURL = outputDirectory.appendingPathComponent("Tricount-Backend.Auth-Session.postman_collection.json")
+            let authAccountPostmanURL = outputDirectory.appendingPathComponent("Tricount-Backend.Auth-Account.postman_collection.json")
+            let authMFALoginPostmanURL = outputDirectory.appendingPathComponent("Tricount-Backend.Auth-MFA-Login.postman_collection.json")
+            let authMFASettingsPostmanURL = outputDirectory.appendingPathComponent("Tricount-Backend.Auth-MFA-Settings.postman_collection.json")
+            let authPasskeyManagementPostmanURL = outputDirectory.appendingPathComponent("Tricount-Backend.Auth-Passkey-Management.postman_collection.json")
             let markdownURL = outputDirectory.appendingPathComponent("routes.md")
 
             #expect(FileManager.default.fileExists(atPath: postmanURL.path))
-            #expect(FileManager.default.fileExists(atPath: markdownURL.path))
+            #expect(FileManager.default.fileExists(atPath: authSessionPostmanURL.path))
+            #expect(FileManager.default.fileExists(atPath: authAccountPostmanURL.path))
+            #expect(FileManager.default.fileExists(atPath: authMFALoginPostmanURL.path))
+            #expect(FileManager.default.fileExists(atPath: authMFASettingsPostmanURL.path))
+            #expect(FileManager.default.fileExists(atPath: authPasskeyManagementPostmanURL.path))
+            #expect(!FileManager.default.fileExists(atPath: markdownURL.path))
 
             // Validate Postman collection structure
             let postmanData = try Data(contentsOf: postmanURL)
@@ -341,31 +372,72 @@ struct TricountBackendTests {
             #expect(variableKeys.contains("accessToken"))
             #expect(variableKeys.contains("refreshToken"))
             #expect(variableKeys.contains("otpCode"))
+            #expect(variableKeys.contains("emailOtpCode"))
+            #expect(variableKeys.contains("phoneOtpCode"))
             #expect(variableKeys.contains("idToken"))
             #expect(variableKeys.contains("phoneNumber"))
             #expect(variableKeys.contains("credentialId"))
 
+            let events = try #require(root["event"] as? [[String: Any]])
+            let firstEvent = try #require(events.first)
+            let script = try #require(firstEvent["script"] as? [String: Any])
+            let exec = try #require(script["exec"] as? [String])
+            let execScript = exec.joined(separator: "\n")
+            #expect(execScript.contains("pm.environment.set(key, value)"))
+            #expect(execScript.contains("X-Debug-OTP-Code"))
+            #expect(execScript.contains("X-Debug-OTP-Code-Email"))
+            #expect(execScript.contains("X-Debug-OTP-Code-Phone"))
+
             let items = try #require(root["item"] as? [[String: Any]])
             #expect(!items.isEmpty)
 
-            let markdown = try String(contentsOf: markdownURL, encoding: .utf8)
-            #expect(markdown.contains("| POST | /v1/auth/login | none | 200 AuthenticationResultResponse |"))
-            #expect(markdown.contains("## POST /v1/auth/login"))
-            #expect(markdown.contains("## POST /v1/auth/reset-password"))
-            #expect(markdown.contains("## POST /v1/auth/mfa/email/verify"))
-            #expect(markdown.contains("## POST /v1/auth/mfa/authenticator-app/setup"))
-            #expect(markdown.contains("## POST /v1/auth/mfa/authenticator-app/verify"))
-            #expect(markdown.contains("## POST /v1/auth/phone/request-verification"))
-            #expect(markdown.contains("## GET /v1/auth/passkeys"))
-            #expect(markdown.contains("## POST /v1/auth/passkeys/remove"))
-            #expect(markdown.contains("## POST /v1/auth/passkeys/reset"))
-            #expect(markdown.contains("| email | string | yes |"))
-            #expect(markdown.contains("| user.avatarUrl | string? | no |"))
-            #expect(markdown.contains("| user.phoneNumber | string? | no |"))
-            #expect(markdown.contains("| user.phoneVerifiedAt | string? | no |"))
-            #expect(markdown.contains("## POST /v1/auth/passkeys/register/options"))
-            #expect(markdown.contains("## POST /v1/auth/passkeys/authenticate/verify"))
-            #expect(!markdown.contains("| [] | object | yes |"))
+            let authSessionData = try Data(contentsOf: authSessionPostmanURL)
+            let authSessionObject = try JSONSerialization.jsonObject(with: authSessionData)
+            let authSessionRoot = try #require(authSessionObject as? [String: Any])
+            let authSessionInfo = try #require(authSessionRoot["info"] as? [String: Any])
+            #expect(authSessionInfo["name"] as? String == "Tricount Backend - Auth - Session")
+
+            let htmlURL = outputDirectory.appendingPathComponent("index.html")
+            let html = try String(contentsOf: htmlURL, encoding: .utf8)
+            #expect(html.contains("Full Postman Collection"))
+            #expect(html.contains("Session"))
+            #expect(html.contains("Account"))
+            #expect(html.contains("MFA Login"))
+            #expect(html.contains("MFA Settings"))
+            #expect(html.contains("Passkey Management"))
+            #expect(html.contains("/docs/Tricount-Backend.Auth-Session.postman_collection.json"))
+            #expect(html.contains("/docs/Tricount-Backend.Auth-MFA-Settings.postman_collection.json"))
+            #expect(html.contains("nav-section-title"))
+        }
+    }
+
+    @Test("Development OTP endpoints expose a debug OTP header for Postman")
+    func developmentEmailVerificationOTPExposesDebugHeader() async throws {
+        let email = "debug-otp+\(UUID().uuidString.lowercased())@example.com"
+        let password = "Password1"
+        let emailBox = AuthEmailDeliveryBox()
+
+        try await withApp(.development) { app in
+            app.authEmailDispatcherFactory = { _ in
+                MockAuthEmailDispatcher(box: emailBox)
+            }
+
+            var accessToken = ""
+
+            try await app.testing().test(.POST, "v1/auth/register", beforeRequest: { req in
+                try req.content.encode(RegisterRequest(email: email, password: password, displayName: "Debug OTP"))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .created)
+                accessToken = try res.decodeData(AuthResponse.self).accessToken
+            })
+
+            try await app.testing().test(.POST, "v1/auth/verify-profile/email/request-otp", beforeRequest: { req in
+                req.headers.bearerAuthorization = .init(token: accessToken)
+            }, afterResponse: { res async throws in
+                #expect(res.status == .ok)
+                let otpCode = try #require(await emailBox.currentCode(for: .verification))
+                #expect(res.headers.first(name: "X-Debug-OTP-Code") == otpCode)
+            })
         }
     }
 
@@ -1038,6 +1110,256 @@ struct TricountBackendTests {
         }
     }
 
+    @Test("Login returns all available MFA options and allows choosing a non-default option")
+    func loginReturnsAllAvailableMFAOptions() async throws {
+        let email = "mfa-options+\(UUID().uuidString.lowercased())@example.com"
+        let password = "Password1"
+        let box = AuthEmailDeliveryBox()
+
+        try await withApp { app in
+            app.authEmailDispatcherFactory = { _ in
+                MockAuthEmailDispatcher(box: box)
+            }
+
+            var bootstrapToken = ""
+            var setupResponse: AuthenticatorAppMFASetupResponse?
+
+            try await app.testing().test(.POST, "v1/auth/register", beforeRequest: { req in
+                try req.content.encode(RegisterRequest(email: email, password: password, displayName: "MFA Options"))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .created)
+                bootstrapToken = try res.decodeData(AuthResponse.self).accessToken
+            })
+
+            try await app.testing().test(.POST, "v1/auth/verify-profile/email/request-otp", beforeRequest: { req in
+                req.headers.bearerAuthorization = .init(token: bootstrapToken)
+            }, afterResponse: { res async throws in
+                #expect(res.status == .ok)
+            })
+
+            let verificationCode = try #require(await box.currentCode(for: .verification))
+
+            try await app.testing().test(.POST, "v1/auth/verify-profile/email/confirm", beforeRequest: { req in
+                req.headers.bearerAuthorization = .init(token: bootstrapToken)
+                try req.content.encode(VerifyEmailOTPRequest(code: verificationCode))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .ok)
+            })
+
+            try await app.testing().test(.POST, "v1/auth/mfa/authenticator-app/setup", beforeRequest: { req in
+                req.headers.bearerAuthorization = .init(token: bootstrapToken)
+            }, afterResponse: { res async throws in
+                #expect(res.status == .ok)
+                setupResponse = try res.decodeData(AuthenticatorAppMFASetupResponse.self)
+            })
+
+            let setup = try #require(setupResponse)
+            let enableCode = try TOTPService.generateCode(secret: setup.secret)
+
+            try await app.testing().test(.POST, "v1/auth/mfa/authenticator-app/confirm-enable", beforeRequest: { req in
+                req.headers.bearerAuthorization = .init(token: bootstrapToken)
+                try req.content.encode(ConfirmEmailMFAEnableRequest(code: enableCode))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .ok)
+                let payload = try res.decodeData(UserDTO.self)
+                #expect(payload.isMFAEnabled == true)
+                #expect(payload.mfaMethod == "authenticator_app")
+            })
+
+            try await app.testing().test(.POST, "v1/auth/login", beforeRequest: { req in
+                try req.content.encode(LoginRequest(email: email, password: password))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .ok)
+                let payload = try res.decodeData(AuthenticationResultResponse.self)
+                #expect(payload.requiresMFA == true)
+
+                let defaultChallenge = try #require(payload.mfaChallenge)
+                #expect(defaultChallenge.method == "authenticator_app")
+
+                let options = try #require(payload.mfaOptions)
+                #expect(options.count == 2)
+                #expect(Set(options.map(\.method)) == Set(["email", "authenticator_app"]))
+
+                let emailOption = try #require(options.first(where: { $0.method == "email" }))
+                let emailChallengeToken = try #require(emailOption.challengeToken)
+                let emailCode = try #require(await box.currentCode(for: .mfaLogin))
+
+                try await app.testing().test(.POST, "v1/auth/mfa/email/verify", beforeRequest: { req in
+                    try req.content.encode(MFALoginVerifyRequest(challengeToken: emailChallengeToken, code: emailCode))
+                }, afterResponse: { res async throws in
+                    #expect(res.status == .ok)
+                    let authPayload = try res.decodeData(AuthResponse.self)
+                    #expect(authPayload.user.email == email)
+                    #expect(authPayload.user.isMFAEnabled == true)
+                })
+            })
+        }
+    }
+
+    @Test("Phone, passkey, and backup-code MFA methods are available on login")
+    func phonePasskeyAndBackupCodeMFALoginFlow() async throws {
+        let email = "mfa-multi+\(UUID().uuidString.lowercased())@example.com"
+        let password = "Password1"
+        let phoneNumber = "+919876543210"
+        let origin = "http://localhost"
+        let passkey = TestPasskeyCredential()
+        let smsBox = AuthSMSDeliveryBox()
+
+        try await withApp { app in
+            app.authSMSDispatcherFactory = { _ in
+                MockAuthSMSDispatcher(box: smsBox)
+            }
+
+            var bootstrapToken = ""
+            var userHandle = ""
+            var registrationOptions: PasskeyRegistrationOptionsResponse?
+            var backupCodes: [String] = []
+
+            try await app.testing().test(.POST, "v1/auth/register", beforeRequest: { req in
+                try req.content.encode(RegisterRequest(email: email, password: password, displayName: "Multi MFA"))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .created)
+                let payload = try res.decodeData(AuthResponse.self)
+                bootstrapToken = payload.accessToken
+            })
+
+            try await app.testing().test(.POST, "v1/auth/phone/request-verification", beforeRequest: { req in
+                req.headers.bearerAuthorization = .init(token: bootstrapToken)
+                try req.content.encode(SetupPhoneVerificationRequest(phoneNumber: phoneNumber))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .ok)
+            })
+
+            let phoneVerificationCode = try #require(await smsBox.currentPhoneVerificationCode())
+
+            try await app.testing().test(.POST, "v1/auth/phone/confirm-verification", beforeRequest: { req in
+                req.headers.bearerAuthorization = .init(token: bootstrapToken)
+                try req.content.encode(ConfirmPhoneVerificationRequest(code: phoneVerificationCode))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .ok)
+            })
+
+            try await app.testing().test(.POST, "v1/auth/passkeys/register/options", beforeRequest: { req in
+                req.headers.bearerAuthorization = .init(token: bootstrapToken)
+            }, afterResponse: { res async throws in
+                #expect(res.status == .ok)
+                registrationOptions = try res.decodeData(PasskeyRegistrationOptionsResponse.self)
+            })
+
+            let options = try #require(registrationOptions)
+            userHandle = options.user.id
+            let registrationRequest = try passkey.makeRegistrationRequest(
+                challenge: options.challenge,
+                rpId: options.rp.id,
+                origin: origin
+            )
+
+            try await app.testing().test(.POST, "v1/auth/passkeys/register/verify", beforeRequest: { req in
+                req.headers.bearerAuthorization = .init(token: bootstrapToken)
+                try req.content.encode(registrationRequest)
+            }, afterResponse: { res async throws in
+                #expect(res.status == .created)
+            })
+
+            try await app.testing().test(.POST, "v1/auth/mfa/backup-codes/generate", beforeRequest: { req in
+                req.headers.bearerAuthorization = .init(token: bootstrapToken)
+            }, afterResponse: { res async throws in
+                #expect(res.status == .ok)
+                let payload = try res.decodeData(BackupCodesResponse.self)
+                #expect(payload.totalCount == 10)
+                backupCodes = payload.codes
+            })
+
+            try await app.testing().test(.POST, "v1/auth/mfa/enable", beforeRequest: { req in
+                req.headers.bearerAuthorization = .init(token: bootstrapToken)
+                try req.content.encode(EnableMFARequest(method: "passkey"))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .ok)
+                let payload = try res.decodeData(UserDTO.self)
+                #expect(payload.isMFAEnabled == true)
+                #expect(payload.mfaMethod == "passkey")
+            })
+
+            try await app.testing().test(.POST, "v1/auth/login", beforeRequest: { req in
+                try req.content.encode(LoginRequest(email: email, password: password))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .ok)
+                let payload = try res.decodeData(AuthenticationResultResponse.self)
+                #expect(payload.requiresMFA == true)
+                #expect(payload.mfaChallenge?.method == "passkey")
+
+                let methods = Set((payload.mfaOptions ?? []).map(\.method))
+                #expect(methods == Set(["phone", "passkey", "backup_code"]))
+
+                let phoneOption = try #require(payload.mfaOptions?.first(where: { $0.method == "phone" }))
+                let phoneChallengeToken = try #require(phoneOption.challengeToken)
+                let phoneMFACode = try #require(await smsBox.currentMFALoginCode())
+
+                try await app.testing().test(.POST, "v1/auth/mfa/phone/verify", beforeRequest: { req in
+                    try req.content.encode(MFALoginVerifyRequest(challengeToken: phoneChallengeToken, code: phoneMFACode))
+                }, afterResponse: { res async throws in
+                    #expect(res.status == .ok)
+                })
+            })
+
+            try await app.testing().test(.POST, "v1/auth/login", beforeRequest: { req in
+                try req.content.encode(LoginRequest(email: email, password: password))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .ok)
+                let payload = try res.decodeData(AuthenticationResultResponse.self)
+                let backupOption = try #require(payload.mfaOptions?.first(where: { $0.method == "backup_code" }))
+                let backupChallengeToken = try #require(backupOption.challengeToken)
+                let backupCode = try #require(backupCodes.first)
+
+                try await app.testing().test(.POST, "v1/auth/mfa/backup-codes/verify", beforeRequest: { req in
+                    try req.content.encode(MFALoginVerifyRequest(challengeToken: backupChallengeToken, code: backupCode))
+                }, afterResponse: { res async throws in
+                    #expect(res.status == .ok)
+                })
+            })
+
+            try await app.testing().test(.POST, "v1/auth/login", beforeRequest: { req in
+                try req.content.encode(LoginRequest(email: email, password: password))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .ok)
+                let payload = try res.decodeData(AuthenticationResultResponse.self)
+                let passkeyOption = try #require(payload.mfaOptions?.first(where: { $0.method == "passkey" }))
+                let passkeyChallengeToken = try #require(passkeyOption.challengeToken)
+
+                try await app.testing().test(.POST, "v1/auth/mfa/passkeys/authenticate/options", beforeRequest: { req in
+                    try req.content.encode(PasskeyMFALoginOptionsRequest(challengeToken: passkeyChallengeToken))
+                }, afterResponse: { res async throws in
+                    #expect(res.status == .ok)
+                    let payload = try res.decodeData(PasskeyAuthenticationOptionsResponse.self)
+                    let authenticationRequest = try passkey.makeAuthenticationRequest(
+                        challenge: payload.challenge,
+                        rpId: payload.rpId,
+                        origin: origin,
+                        userHandle: userHandle
+                    )
+
+                    try await app.testing().test(.POST, "v1/auth/mfa/passkeys/authenticate/verify", beforeRequest: { req in
+                        try req.content.encode(
+                            PasskeyMFALoginVerificationRequest(
+                                challengeToken: passkeyChallengeToken,
+                                id: authenticationRequest.id,
+                                rawId: authenticationRequest.rawId,
+                                type: authenticationRequest.type,
+                                response: authenticationRequest.response
+                            )
+                        )
+                    }, afterResponse: { res async throws in
+                        #expect(res.status == .ok)
+                        let authPayload = try res.decodeData(AuthResponse.self)
+                        #expect(authPayload.user.email == email)
+                        #expect(authPayload.user.isMFAEnabled == true)
+                        #expect(authPayload.user.mfaMethod == "passkey")
+                    })
+                })
+            })
+        }
+    }
+
     @Test("Phone number can be verified and removed")
     func phoneVerificationAndRemovalFlow() async throws {
         let email = "phone+\(UUID().uuidString.lowercased())@example.com"
@@ -1089,6 +1411,64 @@ struct TricountBackendTests {
                 #expect(payload.phoneNumber == nil)
                 #expect(payload.isPhoneVerified == false)
                 #expect(payload.phoneVerifiedAt == nil)
+            })
+        }
+    }
+
+    @Test("Removing the last primary MFA factor is blocked while MFA is enabled")
+    func removingLastPrimaryMFAFactorIsBlocked() async throws {
+        let email = "phone-guard+\(UUID().uuidString.lowercased())@example.com"
+        let password = "Password1"
+        let phoneNumber = "+919876543211"
+        let smsBox = AuthSMSDeliveryBox()
+
+        try await withApp { app in
+            app.authSMSDispatcherFactory = { _ in
+                MockAuthSMSDispatcher(box: smsBox)
+            }
+
+            var accessToken = ""
+
+            try await app.testing().test(.POST, "v1/auth/register", beforeRequest: { req in
+                try req.content.encode(RegisterRequest(email: email, password: password, displayName: "Guarded MFA"))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .created)
+                accessToken = try res.decodeData(AuthResponse.self).accessToken
+            })
+
+            try await app.testing().test(.POST, "v1/auth/phone/request-verification", beforeRequest: { req in
+                req.headers.bearerAuthorization = .init(token: accessToken)
+                try req.content.encode(SetupPhoneVerificationRequest(phoneNumber: phoneNumber))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .ok)
+            })
+
+            let verificationCode = try #require(await smsBox.currentPhoneVerificationCode())
+
+            try await app.testing().test(.POST, "v1/auth/phone/confirm-verification", beforeRequest: { req in
+                req.headers.bearerAuthorization = .init(token: accessToken)
+                try req.content.encode(ConfirmPhoneVerificationRequest(code: verificationCode))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .ok)
+            })
+
+            try await app.testing().test(.POST, "v1/auth/mfa/enable", beforeRequest: { req in
+                req.headers.bearerAuthorization = .init(token: accessToken)
+                try req.content.encode(EnableMFARequest(method: "phone"))
+            }, afterResponse: { res async throws in
+                #expect(res.status == .ok)
+                let payload = try res.decodeData(UserDTO.self)
+                #expect(payload.isMFAEnabled == true)
+                #expect(payload.mfaMethod == "phone")
+            })
+
+            try await app.testing().test(.POST, "v1/auth/phone/remove", beforeRequest: { req in
+                req.headers.bearerAuthorization = .init(token: accessToken)
+            }, afterResponse: { res async throws in
+                #expect(res.status == .conflict)
+                let payload = try res.decodeData(ErrorResponse.self)
+                #expect(payload.error == "CONFLICT")
+                #expect(payload.message.contains("Add another MFA method"))
             })
         }
     }

@@ -22,8 +22,7 @@ struct AppleAuthService: Sendable {
 
     func verifyToken(_ idToken: String) async throws -> AppleUserProfile {
         do {
-            let applicationIdentifier = Environment.get("APPLE_APPLICATION_IDENTIFIER")
-                ?? Environment.get("APPLE_BUNDLE_ID")
+            let applicationIdentifier = req.application.runtimeConfiguration.oauth.appleApplicationIdentifier
             let token = try await req.jwt.apple.verify(idToken, applicationIdentifier: applicationIdentifier)
             let normalizedEmail = token.email.map(AuthValidation.normalizeEmail)
             let displayName = normalizedEmail?.components(separatedBy: "@").first ?? "Apple User"

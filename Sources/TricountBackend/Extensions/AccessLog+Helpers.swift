@@ -10,6 +10,14 @@ private struct CleanLoggerStorageKey: StorageKey {
     typealias Value = Logger
 }
 
+private enum AccessLogConstants {
+    static let maxBodyBytes = 1024
+    static let sensitiveFieldRegex: NSRegularExpression = {
+        let pattern = #"(\"(?:password|token|secret|otp|code|refresh_token|id_token|credential|authData)\")\s*:\s*\"[^\"]*\""#
+        return try! NSRegularExpression(pattern: pattern, options: [])
+    }()
+}
+
 extension Request {
     var requestID: String {
         get {
@@ -35,6 +43,7 @@ extension Request {
             }
             var l = Logger(label: "tricount.access")
             l.logLevel = logger.logLevel
+            storage[CleanLoggerStorageKey.self] = l
             return l
         }
         set {
@@ -50,8 +59,12 @@ extension Request {
     }
 
     /// Returns a sanitized, truncated snapshot of the request body for logging.
-    /// Redacts sensitive fields (password, token, secret, otp, code) and caps at 2KB.
+    /// Redacts sensitive fields and caps the payload at 1KB when body logging is enabled.
     var sanitizedBodySnapshot: String? {
+        guard application.runtimeConfiguration.observability.includeRequestBodiesInAccessLogs else {
+            return nil
+        }
+
         guard let contentType = headers.contentType,
               contentType.subType == "json",
               var buffer = body.data,
@@ -60,15 +73,16 @@ extension Request {
             return nil
         }
 
-        let maxBytes = 2048
+        let maxBytes = AccessLogConstants.maxBodyBytes
         let bytesToRead = min(buffer.readableBytes, maxBytes)
         guard let raw = buffer.readString(length: bytesToRead) else { return nil }
 
-        let sensitivePattern = #"("(?:password|token|secret|otp|code|refresh_token|id_token|credential|authData)")\s*:\s*"[^"]*""#
-        let redacted = raw.replacingOccurrences(
-            of: sensitivePattern,
-            with: #"$1: "***""#,
-            options: .regularExpression
+        let fullRange = NSRange(raw.startIndex..<raw.endIndex, in: raw)
+        let redacted = AccessLogConstants.sensitiveFieldRegex.stringByReplacingMatches(
+            in: raw,
+            options: [],
+            range: fullRange,
+            withTemplate: #"$1: "***""#
         )
 
         let truncated = buffer.readableBytes > maxBytes

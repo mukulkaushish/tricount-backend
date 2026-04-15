@@ -5,6 +5,10 @@ struct PasskeyAuthenticationOptionsRequest: Content {
     let email: String?
 }
 
+struct PasskeyMFALoginOptionsRequest: Content {
+    let challengeToken: String
+}
+
 struct PasskeyRegistrationOptionsResponse: Content {
     let challenge: String
     let rp: PasskeyRelyingPartyDTO
@@ -38,11 +42,30 @@ struct PasskeyAuthenticationVerificationRequest: Content {
     let response: PasskeyAuthenticationCredentialResponseDTO
 }
 
+struct PasskeyMFALoginVerificationRequest: Content {
+    let challengeToken: String
+    let id: String
+    let rawId: String
+    let type: String
+    let response: PasskeyAuthenticationCredentialResponseDTO
+
+    var authenticationRequest: PasskeyAuthenticationVerificationRequest {
+        PasskeyAuthenticationVerificationRequest(
+            id: id,
+            rawId: rawId,
+            type: type,
+            response: response
+        )
+    }
+}
+
 struct RemovePasskeyRequest: Content {
     let credentialId: String
 }
 
 struct PasskeyCredentialDTO: Content {
+    nonisolated(unsafe) private static let dateFormatter: ISO8601DateFormatter = ISO8601DateFormatter()
+
     let id: String
     let credentialId: String
     let transports: [String]
@@ -50,12 +73,11 @@ struct PasskeyCredentialDTO: Content {
     let lastUsedAt: String?
 
     init(from credential: PasskeyCredential) {
-        let formatter = ISO8601DateFormatter()
         self.id = credential.id?.uuidString ?? ""
         self.credentialId = credential.credentialId
         self.transports = credential.transports
-        self.createdAt = formatter.string(from: credential.createdAt ?? Date())
-        self.lastUsedAt = credential.lastUsedAt.map(formatter.string(from:))
+        self.createdAt = Self.dateFormatter.string(from: credential.createdAt ?? Date())
+        self.lastUsedAt = credential.lastUsedAt.map(Self.dateFormatter.string(from:))
     }
 }
 

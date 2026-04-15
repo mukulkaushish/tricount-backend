@@ -2,6 +2,8 @@ import Foundation
 import Vapor
 
 struct RouteDocumentationGenerator {
+    nonisolated(unsafe) private static let dateFormatter: ISO8601DateFormatter = ISO8601DateFormatter()
+
     private let application: Application
     private let errorSchema = DocumentationSchemaFactory.make(for: ErrorResponse.self)
 
@@ -16,29 +18,87 @@ struct RouteDocumentationGenerator {
         )
 
         let snapshot = makeSnapshot()
+        // Only document versioned API routes. This avoids clutter like `/`, `/docs`, etc.
+        let documentedRoutes = snapshot.routes.filter { $0.path.hasPrefix("/v1/") }
+        let documentedSnapshot = RouteDocumentationSnapshot(
+            service: snapshot.service,
+            environment: snapshot.environment,
+            generatedAt: snapshot.generatedAt,
+            routeCount: documentedRoutes.count,
+            schemas: makeSchemas(from: documentedRoutes),
+            routes: documentedRoutes
+        )
 
-        let markdown = renderMarkdown(for: snapshot)
-        let markdownURL = outputDirectory.appendingPathComponent("routes.md")
-        try markdown.write(to: markdownURL, atomically: true, encoding: .utf8)
+        let groups = routeGroups(from: documentedSnapshot.routes)
+        try cleanupExistingGeneratedArtifacts(in: outputDirectory, groups: groups)
+        let sectionArtifacts = sectionCollectionArtifacts(for: groups)
 
-        let html = renderHTML(for: snapshot)
+        let html = renderHTML(
+            for: documentedSnapshot,
+            groups: groups,
+            sectionArtifacts: sectionArtifacts
+        )
         let htmlURL = outputDirectory.appendingPathComponent("index.html")
         try html.write(to: htmlURL, atomically: true, encoding: .utf8)
 
-        let postman = renderPostmanCollection(for: snapshot)
+        let postman = renderPostmanCollection(
+            name: "Tricount Backend",
+            description: "Auto-generated from registered Vapor routes at startup.\nTokens auto-extracted from auth responses.",
+            routes: documentedSnapshot.routes
+        )
         let postmanData = try JSONSerialization.data(
             withJSONObject: postman,
             options: [.prettyPrinted, .sortedKeys]
         )
         let postmanURL = outputDirectory.appendingPathComponent("Tricount-Backend.postman_collection.json")
         try postmanData.write(to: postmanURL, options: .atomic)
+
+        for artifact in sectionArtifacts {
+            let sectionPostman = renderPostmanCollection(
+                name: "Tricount Backend - \(artifact.title)",
+                description: "Auto-generated from registered Vapor routes for the \(artifact.title) section.\nTokens auto-extracted from auth responses.",
+                routes: artifact.routes
+            )
+            let sectionPostmanData = try JSONSerialization.data(
+                withJSONObject: sectionPostman,
+                options: [.prettyPrinted, .sortedKeys]
+            )
+            let sectionPostmanURL = outputDirectory.appendingPathComponent(artifact.fileName)
+            try sectionPostmanData.write(to: sectionPostmanURL, options: .atomic)
+        }
+    }
+
+    private func cleanupExistingGeneratedArtifacts(in outputDirectory: URL, groups: [RouteGroup]) throws {
+        let fileManager = FileManager.default
+        let existingFiles = try fileManager.contentsOfDirectory(
+            at: outputDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )
+        let legacyMarkdownFiles = Set(["routes.md"] + groups.map { "\($0.slug).md" })
+
+        for fileURL in existingFiles {
+            let fileName = fileURL.lastPathComponent
+            let shouldDelete =
+                fileName == "index.html" ||
+                legacyMarkdownFiles.contains(fileName) ||
+                (fileName.hasPrefix("Tricount-Backend") && fileName.hasSuffix(".postman_collection.json"))
+
+            if shouldDelete {
+                try? fileManager.removeItem(at: fileURL)
+            }
+        }
     }
 
     // MARK: - Postman Collection v2.1
 
-    private func renderPostmanCollection(for snapshot: RouteDocumentationSnapshot) -> [String: Any] {
+    private func renderPostmanCollection(
+        name: String,
+        description: String,
+        routes: [RouteDocumentationEntry]
+    ) -> [String: Any] {
         // Group routes by path prefix for folder organization
-        let groups = routeGroups(from: snapshot.routes)
+        let groups = routeGroups(from: routes)
 
         // Token extraction script (collection-level test)
         let tokenScript: [String: Any] = [
@@ -46,29 +106,79 @@ struct RouteDocumentationGenerator {
             "script": [
                 "type": "text/javascript",
                 "exec": [
+                    "function setRuntimeVariable(key, value) {",
+                    "    if (typeof value !== 'string' || value.length === 0) {",
+                    "        return;",
+                    "    }",
+                    "    try { pm.collectionVariables.set(key, value); } catch (e) {}",
+                    "    try { pm.environment.set(key, value); } catch (e) {}",
+                    "}",
+                    "",
+                    "var body = null;",
+                    "try { body = pm.response.json(); } catch (e) {}",
+                    "",
                     "if (pm.response.code >= 200 && pm.response.code < 300) {",
-                    "    try {",
-                    "        var json = pm.response.json();",
-                    "        var body = json;",
-                    "        if (body.accessToken) {",
-                    "            pm.collectionVariables.set('accessToken', body.accessToken);",
-                    "        }",
-                    "        if (body.refreshToken) {",
-                    "            pm.collectionVariables.set('refreshToken', body.refreshToken);",
-                    "        }",
-                    "        if (body.mfaChallenge && body.mfaChallenge.challengeToken) {",
-                    "            pm.collectionVariables.set('challengeToken', body.mfaChallenge.challengeToken);",
-                    "        }",
-                    "    } catch(e) {}",
+                    "    if (body && body.accessToken) {",
+                    "        setRuntimeVariable('accessToken', body.accessToken);",
+                    "    }",
+                    "    if (body && body.refreshToken) {",
+                    "        setRuntimeVariable('refreshToken', body.refreshToken);",
+                    "    }",
+                    "    if (body && body.mfaChallenge && body.mfaChallenge.challengeToken) {",
+                    "        setRuntimeVariable('challengeToken', body.mfaChallenge.challengeToken);",
+                    "    }",
+                    "",
+                    "    var otpCode = pm.response.headers.get('X-Debug-OTP-Code');",
+                    "    if (otpCode) {",
+                    "        setRuntimeVariable('otpCode', otpCode);",
+                    "    }",
+                    "",
+                    "    var emailOtpCode = pm.response.headers.get('X-Debug-OTP-Code-Email');",
+                    "    if (emailOtpCode) {",
+                    "        setRuntimeVariable('emailOtpCode', emailOtpCode);",
+                    "    }",
+                    "",
+                    "    var phoneOtpCode = pm.response.headers.get('X-Debug-OTP-Code-Phone');",
+                    "    if (phoneOtpCode) {",
+                    "        setRuntimeVariable('phoneOtpCode', phoneOtpCode);",
+                    "    }",
+                    "",
+                    "    if (!otpCode && emailOtpCode && !phoneOtpCode) {",
+                    "        setRuntimeVariable('otpCode', emailOtpCode);",
+                    "    }",
+                    "    if (!otpCode && phoneOtpCode && !emailOtpCode) {",
+                    "        setRuntimeVariable('otpCode', phoneOtpCode);",
+                    "    }",
+                    "    if (!otpCode && body && body.mfaChallenge && body.mfaChallenge.method === 'email' && emailOtpCode) {",
+                    "        setRuntimeVariable('otpCode', emailOtpCode);",
+                    "    }",
+                    "    if (!otpCode && body && body.mfaChallenge && body.mfaChallenge.method === 'phone' && phoneOtpCode) {",
+                    "        setRuntimeVariable('otpCode', phoneOtpCode);",
+                    "    }",
+                    "",
+                    "    if (body && body.credentialId) {",
+                    "        setRuntimeVariable('credentialId', body.credentialId);",
+                    "    }",
                     "}"
                 ]
             ] as [String: Any]
         ]
 
         let folders: [[String: Any]] = groups.map { group in
-            let items: [[String: Any]] = group.routes.map { route in
-                postmanItem(for: route)
+            let sections = routeSections(from: group.routes, within: group)
+            let items: [[String: Any]]
+
+            if sections.count == 1, let section = sections.first, !section.isExplicit {
+                items = section.routes.map(postmanItem(for:))
+            } else {
+                items = sections.map { section in
+                    [
+                        "name": section.title,
+                        "item": section.routes.map(postmanItem(for:))
+                    ]
+                }
             }
+
             return [
                 "name": group.title,
                 "item": items
@@ -77,8 +187,8 @@ struct RouteDocumentationGenerator {
 
         return [
             "info": [
-                "name": "Tricount Backend",
-                "description": "Auto-generated from registered Vapor routes at startup.\nTokens auto-extracted from auth responses.",
+                "name": name,
+                "description": description,
                 "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
             ] as [String: Any],
             "variable": [
@@ -90,6 +200,8 @@ struct RouteDocumentationGenerator {
                 ["key": "password", "value": "Test1234", "type": "string"],
                 ["key": "displayName", "value": "Test User", "type": "string"],
                 ["key": "otpCode", "value": "123456", "type": "string"],
+                ["key": "emailOtpCode", "value": "", "type": "string"],
+                ["key": "phoneOtpCode", "value": "", "type": "string"],
                 ["key": "idToken", "value": "", "type": "string"],
                 ["key": "phoneNumber", "value": "+1234567890", "type": "string"],
                 ["key": "credentialId", "value": "", "type": "string"]
@@ -240,7 +352,7 @@ struct RouteDocumentationGenerator {
         return RouteDocumentationSnapshot(
             service: "tricount-backend",
             environment: application.environment.name,
-            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            generatedAt: Self.dateFormatter.string(from: Date()),
             routeCount: routes.count,
             schemas: schemas,
             routes: routes
@@ -256,6 +368,7 @@ struct RouteDocumentationGenerator {
             path: Self.pathString(for: route),
             summary: route.userInfo["description"] as? String,
             auth: metadata.auth.rawValue,
+            section: metadata.section,
             rateLimit: RouteRateLimitDocumentation(policy: route.rateLimitPolicy),
             requestBody: metadata.requestBody.map(RouteDocumentationRequestBodyEntry.init),
             successResponse: RouteDocumentationSuccessResponseEntry(response: metadata.successResponse),
@@ -305,82 +418,104 @@ struct RouteDocumentationGenerator {
         return errors.sorted { $0.statusCode < $1.statusCode }
     }
 
-    private func renderMarkdown(for snapshot: RouteDocumentationSnapshot) -> String {
+    private func renderMarkdown(
+        title: String,
+        snapshot: RouteDocumentationSnapshot,
+        groups: [RouteGroup],
+        postmanCollections: [DocumentationArtifact],
+        sectionDocuments: [DocumentationArtifact]
+    ) -> String {
+        let routes = groups.flatMap(\.routes)
+        let schemas = makeSchemas(from: routes)
+
         var lines: [String] = [
-            "# Tricount API Reference",
+            "# \(title)",
+            "",
+            "## Overview",
             "",
             "- Generated at: \(snapshot.generatedAt)",
             "- Environment: \(snapshot.environment)",
-            "- Route count: \(snapshot.routeCount)",
-            "- Schema count: \(snapshot.schemas.count)",
+            "- Route count: \(routes.count)",
+            "- Schema count: \(schemas.count)",
             "",
             "> Auto-generated at application startup from the registered Vapor routes and their typed request/response DTOs.",
-            "",
-            "| Method | Path | Auth | Success | Rate Limit |",
-            "|---|---|---|---|---|",
         ]
 
-        for route in snapshot.routes {
-            lines.append(
-                "| \(route.method) | \(route.path) | \(route.auth) | \(route.successResponse.summary) | \(route.rateLimit.summary) |"
-            )
-        }
+        if !postmanCollections.isEmpty {
+            lines += [
+                "",
+                "## Postman Collections",
+                "",
+                "| Collection | File | Routes |",
+                "|---|---|---|",
+            ]
 
-        for route in snapshot.routes {
-            lines.append("")
-            lines.append("## \(route.method) \(route.path)")
-            if let summary = route.summary, !summary.isEmpty {
-                lines.append("")
-                lines.append(summary)
-            }
-
-            lines.append("")
-            lines.append("- Auth: \(route.auth)")
-            lines.append("- Rate limit: \(route.rateLimit.summary)")
-            lines.append("- Success: \(route.successResponse.summary)")
-
-            if let requestBody = route.requestBody {
-                lines.append("")
-                lines.append("### Request Body")
-                lines.append("")
-                lines.append("- Content-Type: \(requestBody.contentType)")
-                lines.append("- Type: \(requestBody.typeName)")
-                lines.append("")
-                lines.append(contentsOf: makeFieldTableLines(for: requestBody.schema))
-            }
-
-            if let successSchema = route.successResponse.schema {
-                lines.append("")
-                lines.append("### Success Response")
-                lines.append("")
-                lines.append("- Status: \(route.successResponse.statusCode)")
-                if let contentType = route.successResponse.contentType {
-                    lines.append("- Content-Type: \(contentType)")
-                }
-                if let typeName = route.successResponse.typeName {
-                    lines.append("- Type: \(typeName)")
-                }
-                lines.append("")
-                lines.append(contentsOf: makeFieldTableLines(for: successSchema))
-            }
-
-            if !route.errors.isEmpty {
-                lines.append("")
-                lines.append("### Standard Errors")
-                lines.append("")
-                lines.append("| Status | Code | Reason |")
-                lines.append("|---|---|---|")
-                for error in route.errors {
-                    lines.append("| \(error.statusCode) | \(error.code) | \(error.reason) |")
-                }
+            for artifact in postmanCollections {
+                lines.append("| \(artifact.title) | [\(artifact.fileName)](\(artifact.fileName)) | \(artifact.routeCount) |")
             }
         }
 
-        if !snapshot.schemas.isEmpty {
+        if !sectionDocuments.isEmpty {
+            lines += [
+                "",
+                "## Section Docs",
+                "",
+                "| Section | File | Routes |",
+                "|---|---|---|",
+            ]
+
+            for artifact in sectionDocuments {
+                lines.append("| \(artifact.title) | [\(artifact.fileName)](\(artifact.fileName)) | \(artifact.routeCount) |")
+            }
+        }
+
+        if groups.count > 1 {
+            lines += [
+                "",
+                "## Endpoint Areas",
+                "",
+                "| Area | Prefix | Routes |",
+                "|---|---|---|",
+            ]
+
+            for group in groups {
+                lines.append("| \(group.title) | `/\(group.prefix)` | \(group.routes.count) |")
+            }
+        }
+
+        for group in groups {
+            let subgroups = routeSubgroups(from: group.routes, within: group)
+            lines += [
+                "",
+                "## \(group.title)",
+                "",
+                "- Prefix: `/\(group.prefix)`",
+                "- Route count: \(group.routes.count)",
+                "",
+                "### Area Summary",
+                "",
+            ]
+            lines.append(contentsOf: makeRouteSummaryTableLines(for: group.routes))
+
+            for subgroup in subgroups {
+                lines += [
+                    "",
+                    "### \(subgroup.title)",
+                    "",
+                ]
+                lines.append(contentsOf: makeRouteSummaryTableLines(for: subgroup.routes))
+
+                for route in subgroup.routes {
+                    lines.append(contentsOf: markdownRouteLines(for: route, headingLevel: 4))
+                }
+            }
+        }
+
+        if !schemas.isEmpty {
             lines.append("")
             lines.append("## Schemas")
-            for name in snapshot.schemas.keys.sorted() {
-                guard let schema = snapshot.schemas[name] else { continue }
+            for name in schemas.keys.sorted() {
+                guard let schema = schemas[name] else { continue }
                 lines.append("")
                 lines.append("### \(name)")
                 lines.append("")
@@ -391,11 +526,95 @@ struct RouteDocumentationGenerator {
         return lines.joined(separator: "\n") + "\n"
     }
 
+    private func makeRouteSummaryTableLines(for routes: [RouteDocumentationEntry]) -> [String] {
+        var lines = [
+            "| Method | Path | Auth | Success | Rate Limit |",
+            "|---|---|---|---|---|",
+        ]
+
+        for route in routes {
+            lines.append(
+                "| \(route.method) | \(route.path) | \(route.auth) | \(route.successResponse.summary) | \(route.rateLimit.summary) |"
+            )
+        }
+
+        return lines
+    }
+
+    private func markdownRouteLines(for route: RouteDocumentationEntry, headingLevel: Int) -> [String] {
+        let headingPrefix = String(repeating: "#", count: max(2, headingLevel))
+        var lines: [String] = [
+            "",
+            "\(headingPrefix) \(route.method) \(route.path)",
+        ]
+
+        if let summary = route.summary, !summary.isEmpty {
+            lines += [
+                "",
+                summary,
+            ]
+        }
+
+        lines += [
+            "",
+            "- Auth: \(route.auth)",
+            "- Rate limit: \(route.rateLimit.summary)",
+            "- Success: \(route.successResponse.summary)",
+        ]
+
+        if let requestBody = route.requestBody {
+            lines += [
+                "",
+                "\(headingPrefix)# Request Body",
+                "",
+                "- Content-Type: \(requestBody.contentType)",
+                "- Type: \(requestBody.typeName)",
+                "",
+            ]
+            lines.append(contentsOf: makeFieldTableLines(for: requestBody.schema))
+        }
+
+        if let successSchema = route.successResponse.schema {
+            lines += [
+                "",
+                "\(headingPrefix)# Success Response",
+                "",
+                "- Status: \(route.successResponse.statusCode)",
+            ]
+            if let contentType = route.successResponse.contentType {
+                lines.append("- Content-Type: \(contentType)")
+            }
+            if let typeName = route.successResponse.typeName {
+                lines.append("- Type: \(typeName)")
+            }
+            lines.append("")
+            lines.append(contentsOf: makeFieldTableLines(for: successSchema))
+        }
+
+        if !route.errors.isEmpty {
+            lines += [
+                "",
+                "\(headingPrefix)# Standard Errors",
+                "",
+                "| Status | Code | Reason |",
+                "|---|---|---|",
+            ]
+            for error in route.errors {
+                lines.append("| \(error.statusCode) | \(error.code) | \(error.reason) |")
+            }
+        }
+
+        return lines
+    }
+
     // MARK: - HTML Rendering
 
-    private func renderHTML(for snapshot: RouteDocumentationSnapshot) -> String {
+    private func renderHTML(
+        for snapshot: RouteDocumentationSnapshot,
+        groups: [RouteGroup],
+        sectionArtifacts: [CollectionArtifact]
+    ) -> String {
         var html = htmlHead(for: snapshot)
-        let groups = routeGroups(from: snapshot.routes)
 
         // --- Sidebar ---
         html += "<aside class=\"sidebar\" id=\"sidebar\">\n"
@@ -407,13 +626,19 @@ struct RouteDocumentationGenerator {
         html += "  <nav class=\"sidebar-nav\" id=\"sidebar-nav\">\n"
 
         for group in groups {
+            let sections = routeSections(from: group.routes, within: group)
             html += "  <div class=\"nav-group\">\n"
             html += "    <div class=\"nav-group-title\">\(escapeHTML(group.title))</div>\n"
-            for route in group.routes {
-                let m = route.method.lowercased()
-                html += "    <a class=\"nav-item\" href=\"#\(routeAnchor(route))\" data-search=\"\(escapeHTML(route.method.lowercased())) \(escapeHTML(route.path.lowercased()))\">"
-                html += "<span class=\"nav-method \(m)\">\(escapeHTML(route.method))</span>"
-                html += "<span class=\"nav-path\">\(escapeHTML(shortPath(route.path, group: group.prefix)))</span></a>\n"
+            for section in sections {
+                if sections.count > 1 || section.isExplicit {
+                    html += "    <div class=\"nav-section-title\">\(escapeHTML(section.title))</div>\n"
+                }
+                for route in section.routes {
+                    let m = route.method.lowercased()
+                    html += "    <a class=\"nav-item\" href=\"#\(routeAnchor(route))\" data-search=\"\(escapeHTML(route.method.lowercased())) \(escapeHTML(route.path.lowercased())) \(escapeHTML(group.title.lowercased())) \(escapeHTML(section.title.lowercased()))\">"
+                    html += "<span class=\"nav-method \(m)\">\(escapeHTML(route.method))</span>"
+                    html += "<span class=\"nav-path\">\(escapeHTML(shortPath(route.path, group: group.prefix)))</span></a>\n"
+                }
             }
             html += "  </div>\n"
         }
@@ -461,14 +686,42 @@ struct RouteDocumentationGenerator {
         // Hero
         html += "<div class=\"hero\">\n"
         html += "  <h1>API Reference</h1>\n"
-        html += "  <p class=\"hero-sub\">Complete endpoint documentation for <strong>tricount-backend</strong>"
-        html += " &middot; <a class=\"postman-link\" href=\"/docs/Tricount-Backend.postman_collection.json\" download>Download Postman Collection</a></p>\n"
+        html += "  <p class=\"hero-sub\">Complete endpoint documentation for <strong>tricount-backend</strong></p>\n"
         html += "  <div class=\"hero-stats\">\n"
         html += "    <div class=\"stat-card\"><div class=\"stat-value\">\(snapshot.routeCount)</div><div class=\"stat-label\">Endpoints</div></div>\n"
         html += "    <div class=\"stat-card\"><div class=\"stat-value\">\(snapshot.schemas.count)</div><div class=\"stat-label\">Schemas</div></div>\n"
         html += "    <div class=\"stat-card\"><div class=\"stat-value\">\(escapeHTML(snapshot.environment))</div><div class=\"stat-label\">Environment</div></div>\n"
         html += "  </div>\n"
         html += "</div>\n"
+
+        html += "<div class=\"download-section\">\n"
+        html += "  <div class=\"download-section-title\">Full API</div>\n"
+        html += "  <div class=\"download-grid\">\n"
+        html += renderDownloadCard(
+            title: "Full Postman Collection",
+            detail: "\(snapshot.routeCount) routes",
+            href: "/docs/Tricount-Backend.postman_collection.json"
+        )
+        html += "  </div>\n"
+        html += "</div>\n"
+
+        for group in groups {
+            let groupArtifacts = sectionArtifacts.filter { $0.groupSlug == group.slug }
+            guard !groupArtifacts.isEmpty else { continue }
+
+            html += "<div class=\"download-section\">\n"
+            html += "  <div class=\"download-section-title\">\(escapeHTML(group.title))</div>\n"
+            html += "  <div class=\"download-grid\">\n"
+            for artifact in groupArtifacts {
+                html += renderDownloadCard(
+                    title: artifact.sectionTitle ?? artifact.title,
+                    detail: "\(artifact.routeCount) routes",
+                    href: "/docs/\(artifact.fileName)"
+                )
+            }
+            html += "  </div>\n"
+            html += "</div>\n"
+        }
 
         // --- Environment Variables Legend (Postman {{variable}} syntax) ---
         html += "<div class=\"env-legend\">\n"
@@ -496,7 +749,19 @@ struct RouteDocumentationGenerator {
         for group in groups {
             html += "<section class=\"endpoint-group\" id=\"group-\(escapeHTML(group.prefix))\">\n"
             html += "  <h2>\(escapeHTML(group.title))</h2>\n"
-            for route in group.routes { html += renderRouteCard(route) }
+            let sections = routeSections(from: group.routes, within: group)
+            for section in sections {
+                if sections.count > 1 || section.isExplicit {
+                    html += "  <div class=\"endpoint-subsection\">\n"
+                    html += "    <h3>\(escapeHTML(section.title))</h3>\n"
+                }
+                for route in section.routes {
+                    html += renderRouteCard(route)
+                }
+                if sections.count > 1 || section.isExplicit {
+                    html += "  </div>\n"
+                }
+            }
             html += "</section>\n"
         }
 
@@ -585,6 +850,15 @@ struct RouteDocumentationGenerator {
         h += "</div>\n" // end card-panels
         h += "</div>\n" // end card
         return h
+    }
+
+    private func renderDownloadCard(title: String, detail: String, href: String) -> String {
+        """
+        <a class="download-card" href="\(escapeHTML(href))" download>
+          <div class="download-card-title">\(escapeHTML(title))</div>
+          <div class="download-card-detail">\(escapeHTML(detail))</div>
+        </a>
+        """
     }
 
     private func curlExample(for route: RouteDocumentationEntry) -> String {
@@ -691,8 +965,180 @@ struct RouteDocumentationGenerator {
             groups[prefix, default: []].append(route)
         }
         return order.compactMap { key in
-            groups[key].map { RouteGroup(prefix: key, title: key == "root" ? "Root" : key.replacingOccurrences(of: "/", with: " / ").capitalized, routes: $0) }
+            groups[key].map {
+                RouteGroup(
+                    prefix: key,
+                    title: displayTitle(for: key),
+                    slug: slug(for: key),
+                    routes: $0
+                )
+            }
         }
+    }
+
+    private func routeSections(from routes: [RouteDocumentationEntry], within group: RouteGroup) -> [RouteSection] {
+        var buckets: [String: [RouteDocumentationEntry]] = [:]
+        var metadataByKey: [String: RouteDocumentationSection] = [:]
+        var explicitByKey: [String: Bool] = [:]
+        var order: [String] = []
+
+        for route in routes {
+            let section = route.section ?? fallbackSection(for: route, group: group)
+            if buckets[section.slug] == nil {
+                order.append(section.slug)
+                metadataByKey[section.slug] = section
+            }
+            buckets[section.slug, default: []].append(route)
+            explicitByKey[section.slug] = (explicitByKey[section.slug] ?? false) || (route.section != nil)
+        }
+
+        return order.compactMap { key in
+            guard let section = metadataByKey[key],
+                  let sectionRoutes = buckets[key] else {
+                return nil
+            }
+
+            return RouteSection(
+                slug: section.slug,
+                title: section.title,
+                routes: sectionRoutes,
+                isExplicit: explicitByKey[key] ?? false
+            )
+        }
+    }
+
+    private func fallbackSection(for route: RouteDocumentationEntry, group: RouteGroup) -> RouteDocumentationSection {
+        let key = subgroupKey(for: route, groupPrefix: group.prefix)
+        return RouteDocumentationSection(
+            slug: key,
+            title: key == "general" ? "General" : humanizeSegment(key)
+        )
+    }
+
+    private func routeSubgroups(from routes: [RouteDocumentationEntry], within group: RouteGroup) -> [RouteSubgroup] {
+        var buckets: [String: [RouteDocumentationEntry]] = [:]
+        var order: [String] = []
+
+        for route in routes {
+            let subgroupKey = subgroupKey(for: route, groupPrefix: group.prefix)
+            if buckets[subgroupKey] == nil {
+                order.append(subgroupKey)
+            }
+            buckets[subgroupKey, default: []].append(route)
+        }
+
+        return order.compactMap { key in
+            buckets[key].map {
+                RouteSubgroup(
+                    key: key,
+                    title: key == "general" ? "General" : humanizeSegment(key),
+                    routes: $0
+                )
+            }
+        }
+    }
+
+    private func subgroupKey(for route: RouteDocumentationEntry, groupPrefix: String) -> String {
+        let fullSegments = route.path
+            .split(separator: "/")
+            .map(String.init)
+        let groupSegments = groupPrefix
+            .split(separator: "/")
+            .map(String.init)
+        let remainingSegments = Array(fullSegments.dropFirst(groupSegments.count))
+
+        guard let first = remainingSegments.first else {
+            return "general"
+        }
+
+        return remainingSegments.count == 1 ? "general" : first
+    }
+
+    private func makeSchemas(from routes: [RouteDocumentationEntry]) -> [String: DocumentationSchema] {
+        routes
+            .flatMap(\.schemas)
+            .reduce(into: [String: DocumentationSchema]()) { schemas, entry in
+                schemas[entry.name] = schemas[entry.name] ?? entry.schema
+            }
+    }
+
+    private func sectionCollectionArtifacts(for groups: [RouteGroup]) -> [CollectionArtifact] {
+        groups.flatMap { group in
+            let sections = routeSections(from: group.routes, within: group)
+            if sections.count == 1, let section = sections.first, !section.isExplicit {
+                return [
+                    CollectionArtifact(
+                        title: group.title,
+                        fileName: group.postmanFileName,
+                        routeCount: group.routes.count,
+                        routes: group.routes,
+                        groupSlug: group.slug,
+                        sectionTitle: nil
+                    )
+                ]
+            }
+
+            return sections.map { section in
+                CollectionArtifact(
+                    title: "\(group.title) - \(section.title)",
+                    fileName: section.postmanFileName(in: group),
+                    routeCount: section.routes.count,
+                    routes: section.routes,
+                    groupSlug: group.slug,
+                    sectionTitle: section.title
+                )
+            }
+        }
+    }
+
+    private func displayTitle(for prefix: String) -> String {
+        let segments = prefix
+            .split(separator: "/")
+            .map(String.init)
+        let meaningfulSegments = segments.first.map { $0.lowercased().hasPrefix("v") } == true
+            ? Array(segments.dropFirst())
+            : segments
+        guard !meaningfulSegments.isEmpty else {
+            return "Root"
+        }
+
+        return meaningfulSegments
+            .map(humanizeSegment)
+            .joined(separator: " / ")
+    }
+
+    private func slug(for prefix: String) -> String {
+        let segments = prefix
+            .split(separator: "/")
+            .map(String.init)
+        let meaningfulSegments = segments.first.map { $0.lowercased().hasPrefix("v") } == true
+            ? Array(segments.dropFirst())
+            : segments
+        guard !meaningfulSegments.isEmpty else {
+            return "root"
+        }
+
+        return meaningfulSegments
+            .map { $0.lowercased() }
+            .joined(separator: "-")
+    }
+
+    private func humanizeSegment(_ segment: String) -> String {
+        segment
+            .split(separator: "-")
+            .map { component in
+                switch component.lowercased() {
+                case "mfa":
+                    return "MFA"
+                case "api":
+                    return "API"
+                case "id":
+                    return "ID"
+                default:
+                    return component.prefix(1).uppercased() + component.dropFirst()
+                }
+            }
+            .joined(separator: " ")
     }
 
     private func shortPath(_ fullPath: String, group: String) -> String {
@@ -773,6 +1219,7 @@ struct RouteDocumentationGenerator {
         .sidebar-nav::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
         .nav-group{padding:0.15rem 0}
         .nav-group-title{padding:0.6rem 1rem 0.2rem;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted)}
+        .nav-section-title{padding:0.35rem 1rem 0.15rem 1rem;font-size:0.68rem;font-weight:600;color:var(--text-secondary)}
         .nav-item{display:flex;align-items:center;gap:0.5rem;padding:0.35rem 1rem;color:var(--text-secondary);text-decoration:none;font-size:0.8rem;transition:all .1s;border-left:2px solid transparent;margin:0 0.25rem}
         .nav-item:hover{background:var(--surface-hover);color:var(--text);border-radius:0 var(--radius-sm) var(--radius-sm) 0}
         .nav-item.active{color:var(--accent);background:var(--accent-subtle);border-left-color:var(--accent);border-radius:0 var(--radius-sm) var(--radius-sm) 0}
@@ -815,9 +1262,20 @@ struct RouteDocumentationGenerator {
         .stat-value{font-size:1.15rem;font-weight:700;color:var(--text)}
         .stat-label{font-size:0.65rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600;margin-top:0.1rem}
 
+        /* ===== DOWNLOADS ===== */
+        .download-section{margin-bottom:1rem}
+        .download-section-title{font-size:0.8rem;font-weight:700;color:var(--text-secondary);margin-bottom:0.55rem;text-transform:uppercase;letter-spacing:.05em}
+        .download-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0.65rem;margin-bottom:1.5rem}
+        .download-card{display:block;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:0.85rem 1rem;text-decoration:none;box-shadow:var(--shadow);transition:all .15s}
+        .download-card:hover{border-color:var(--accent);transform:translateY(-1px);box-shadow:var(--shadow-lg)}
+        .download-card-title{font-size:0.82rem;font-weight:700;color:var(--text)}
+        .download-card-detail{font-size:0.74rem;color:var(--text-muted);margin-top:0.2rem}
+
         /* ===== SECTIONS ===== */
         .endpoint-group{margin-bottom:2rem}
         .endpoint-group h2{font-size:1.05rem;font-weight:700;color:var(--text);padding-bottom:0.5rem;margin-bottom:0.85rem;border-bottom:1px solid var(--border)}
+        .endpoint-subsection{margin-bottom:1.25rem}
+        .endpoint-subsection h3{font-size:0.88rem;font-weight:700;color:var(--text-secondary);margin:0.25rem 0 0.75rem}
 
         /* ===== CARD ===== */
         .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:0.65rem;overflow:hidden;box-shadow:var(--shadow);transition:all .15s}
@@ -1107,6 +1565,7 @@ private struct RouteDocumentationEntry {
     let path: String
     let summary: String?
     let auth: String
+    let section: RouteDocumentationSection?
     let rateLimit: RouteRateLimitDocumentation
     let requestBody: RouteDocumentationRequestBodyEntry?
     let successResponse: RouteDocumentationSuccessResponseEntry
@@ -1142,6 +1601,12 @@ private struct RouteDocumentationEntry {
 
         if let summary {
             object["summary"] = summary
+        }
+        if let section {
+            object["section"] = [
+                "slug": section.slug,
+                "title": section.title
+            ]
         }
         if let requestBody {
             object["requestBody"] = requestBody.jsonObject
@@ -1248,10 +1713,67 @@ private struct NamedSchema {
     let schema: DocumentationSchema
 }
 
+private struct DocumentationArtifact {
+    let title: String
+    let fileName: String
+    let routeCount: Int
+}
+
+private struct CollectionArtifact {
+    let title: String
+    let fileName: String
+    let routeCount: Int
+    let routes: [RouteDocumentationEntry]
+    let groupSlug: String
+    let sectionTitle: String?
+}
+
 private struct RouteGroup {
     let prefix: String
     let title: String
+    let slug: String
     let routes: [RouteDocumentationEntry]
+
+    var postmanFileName: String {
+        "Tricount-Backend.\(documentationFileNameSegment(slug)).postman_collection.json"
+    }
+}
+
+private struct RouteSection {
+    let slug: String
+    let title: String
+    let routes: [RouteDocumentationEntry]
+    let isExplicit: Bool
+
+    func postmanFileName(in group: RouteGroup) -> String {
+        let groupSuffix = documentationFileNameSegment(group.slug)
+        let sectionSuffix = documentationFileNameSegment(slug)
+        return "Tricount-Backend.\(groupSuffix)-\(sectionSuffix).postman_collection.json"
+    }
+}
+
+private struct RouteSubgroup {
+    let key: String
+    let title: String
+    let routes: [RouteDocumentationEntry]
+}
+
+private func documentationFileNameSegment(_ slug: String) -> String {
+    slug
+        .split(separator: "-")
+        .map { component in
+            switch component.lowercased() {
+            case "mfa":
+                return "MFA"
+            case "api":
+                return "API"
+            case "id":
+                return "ID"
+            default:
+                return component.prefix(1).uppercased() + component.dropFirst()
+            }
+        }
+        .joined(separator: "-")
 }
 
 private extension RouteDocumentationMetadata {
@@ -1260,6 +1782,7 @@ private extension RouteDocumentationMetadata {
         let hasStructuredType = route.responseType != Response.self
         return RouteDocumentationMetadata(
             auth: .none,
+            section: nil,
             requestBody: nil,
             successResponse: RouteDocumentationResponse(
                 statusCode: Int(HTTPStatus.ok.code),

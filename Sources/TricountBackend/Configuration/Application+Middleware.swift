@@ -2,8 +2,7 @@ import Vapor
 
 extension Application {
     func configureMiddleware() {
-        // Disable Vapor's default route logging — we use our own LoggingMiddleware
-        logger.logLevel = .info
+        logger.logLevel = runtimeConfiguration.observability.logLevel
 
         middleware = .init()  // Clear Vapor's default middleware (includes RouteLoggingMiddleware)
         middleware.use(LoggingMiddleware())

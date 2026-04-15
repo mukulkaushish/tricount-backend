@@ -63,7 +63,13 @@ struct AddPerformanceIndexes: AsyncMigration {
 
         for idx in indexes.reversed() {
             let name = "idx_\(idx.table)_\(idx.column)"
-            try await sql.raw("DROP INDEX \(unsafeRaw: name) ON \(unsafeRaw: idx.table)").run()
+            do {
+                try await sql.raw("DROP INDEX \(unsafeRaw: name) ON \(unsafeRaw: idx.table)").run()
+            } catch {
+                // These indexes are best-effort performance helpers. In MySQL, a foreign-key-backed
+                // index may be required or may already be absent if the server reused/dropped it.
+                continue
+            }
         }
     }
 }

@@ -13,6 +13,13 @@ final class EmailMFAChallenge: Model, ExpiringRecord, @unchecked Sendable {
     enum Method: String, Sendable {
         case email
         case authenticatorApp = "authenticator_app"
+        case phone
+        case backupCode = "backup_code"
+        case passkey
+
+        var isPrimaryFactor: Bool {
+            self != .backupCode
+        }
     }
 
     @ID(key: .id)

@@ -20,6 +20,8 @@ extension Application {
         migrations.add(AddPhoneAndAuthenticatorFieldsToUsers())
         migrations.add(CreatePhoneVerificationOTP())
         migrations.add(CreateAuthenticatorAppSetupChallenge())
+        migrations.add(CreateBackupCode())
         migrations.add(AddPerformanceIndexes())
+        migrations.add(AddBackupCodeIndexes())
     }
 }

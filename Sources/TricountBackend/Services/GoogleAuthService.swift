@@ -16,9 +16,11 @@ struct GoogleUserProfile: Sendable {
 
 struct GoogleAuthService: Sendable {
     private let client: any Client
+    private let expectedAudience: String?
 
-    init(client: any Client) {
+    init(client: any Client, expectedAudience: String?) {
         self.client = client
+        self.expectedAudience = expectedAudience
     }
 
     func verifyToken(_ idToken: String) async throws -> GoogleUserProfile {
@@ -38,7 +40,7 @@ struct GoogleAuthService: Sendable {
             throw AuthError.googleTokenInvalid
         }
 
-        if let expectedAudience = Environment.get("GOOGLE_CLIENT_ID") {
+        if let expectedAudience {
             guard payload.audience == expectedAudience else {
                 throw AuthError.googleTokenInvalid
             }
@@ -73,7 +75,10 @@ extension Application {
     var googleTokenVerifierFactory: @Sendable (Request) -> any GoogleTokenVerifying {
         get {
             self.storage[GoogleTokenVerifierFactoryKey.self] ?? { request in
-                GoogleAuthService(client: request.client)
+                GoogleAuthService(
+                    client: request.client,
+                    expectedAudience: request.application.runtimeConfiguration.oauth.googleClientId
+                )
             }
         }
         set {

@@ -5,9 +5,8 @@ func routes(_ app: Application) throws {
         HealthCheckResponse(status: "ok", service: "tricount-backend")
     }
 
-    // Serve docs index directly (no redirect)
-    app.get("docs") { req in
-        req.fileio.streamFile(at: app.directory.publicDirectory + "docs/index.html")
+    app.get("docs") { _ in
+        Response(status: .seeOther, headers: ["Location": "/docs/index.html"])
     }
 
     let v1 = app.grouped("v1")

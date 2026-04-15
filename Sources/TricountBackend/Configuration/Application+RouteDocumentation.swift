@@ -12,7 +12,7 @@ extension Application {
                 return configured
             }
 
-            if let customPath = Environment.get("ROUTE_DOCS_OUTPUT_DIR"),
+            if let customPath = runtimeConfigurationIfLoaded?.routeDocumentation.customOutputDirectory,
                !customPath.isEmpty {
                 return URL(fileURLWithPath: customPath, isDirectory: true)
             }
