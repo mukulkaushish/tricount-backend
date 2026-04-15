@@ -1,74 +1,134 @@
-# Backend Design (MySQL) — With Admin Controls & Indexing
+# Backend Design (Final Production Version)
 
 ## Overview
 
-This system is designed around a strict financial principle:
+This system is designed for a production-grade expense sharing application.
 
-> **Ledger is the source of truth. Never mutate financial history blindly.**
+Core principle:
 
-This version includes:
-
-* Admin-level controls for editing/deleting entries
-* Safe handling of edge cases
-* Optimized indexing for performance
+> **Ledger is the source of truth. All balances are derived.**
 
 ---
 
-# Phase 0 — Existing Foundation
+# 🔑 Core Financial Rule (MOST IMPORTANT)
 
-Already implemented:
+## Money Precision
 
-* Users
-* Authentication (OAuth, OTP, MFA, passkeys)
+* Store all amounts as **BIGINT (paise)**
 
-✅ No changes required
+  * ₹100.00 → `10000`
+* UI shows 2 decimal places only
+* Never use FLOAT/DOUBLE
 
 ---
 
-# Phase 1 — Groups System
+## Split Logic (Critical)
 
-## Tables
+Example: ₹100 / 3
 
-### groups
+### Steps
 
-* id (PK)
-* name
-* created_by (FK → users.id)
-* created_at
+1. Convert:
 
-### group_members
+   ```
+   10000 / 3 = 3333.33...
+   ```
 
-* id (PK)
-* group_id (FK)
-* user_id (FK)
-* role ENUM('admin','member')
-* joined_at
-* left_at (nullable)
+2. Floor:
 
-### Indexes
+   ```
+   3333, 3333, 3333
+   ```
 
-```sql
-CREATE UNIQUE INDEX uq_group_user ON group_members(group_id, user_id);
-CREATE INDEX idx_group_members_user ON group_members(user_id);
+3. Remainder:
+
+   ```
+   10000 - 9999 = 1
+   ```
+
+4. Distribute remainder:
+
+### Final:
+
+```
+33.34, 33.33, 33.33
 ```
 
 ---
 
-## Admin Rules
+## Distribution Strategy
 
-* Only admins can:
+### ✅ Recommended (Deterministic)
 
-  * Delete group
-  * Remove members
-  * Edit group name
+* Sort users (by user_id or join order)
+* Assign extra paise to first N users
+
+### ⚠️ Optional (Pseudo-random)
+
+* Shuffle users once per expense
+* Store order (important for consistency)
+
+### ❌ Avoid
+
+* True randomness without persistence
 
 ---
 
 ## Edge Cases
 
-* Admin leaves group → promote another admin
-* Last admin cannot leave without transfer
-* User leaves with pending balance → restrict or warn
+* ₹0.01 split across many users
+* Very large groups (100+ users)
+* Re-editing expense must produce same split
+
+---
+
+# Phase 0 — Existing System
+
+Already implemented:
+
+* Users
+* Auth (OAuth, OTP, MFA, passkeys)
+
+---
+
+# Phase 1 — Groups & Membership
+
+## Tables
+
+### groups
+
+* id
+* name
+* created_by
+* created_at
+
+---
+
+### group_members
+
+* id
+* group_id
+* user_id
+* role ENUM('admin','member')
+* status ENUM('active','left','removed')
+* joined_at
+* left_at
+
+---
+
+## Rules
+
+* Users can be added anytime
+* Users can be removed only if balance = 0
+* At least one admin must exist
+
+---
+
+## Edge Cases
+
+* Admin leaves → must assign another admin
+* Rejoining user → reuse or create new membership
+* Removed users still appear in history
 
 ---
 
@@ -78,7 +138,7 @@ CREATE INDEX idx_group_members_user ON group_members(user_id);
 
 ### expenses
 
-* id (PK)
+* id
 * group_id
 * paid_by
 * amount (BIGINT)
@@ -89,110 +149,73 @@ CREATE INDEX idx_group_members_user ON group_members(user_id);
 * updated_at
 * deleted_at
 
+---
+
 ### expense_splits
 
-* id (PK)
+* id
 * expense_id
 * user_id
-* amount
-
----
-
-## Indexes
-
-```sql
-CREATE INDEX idx_expenses_group ON expenses(group_id);
-CREATE INDEX idx_expenses_paid_by ON expenses(paid_by);
-CREATE INDEX idx_expenses_created_at ON expenses(created_at);
-
-CREATE UNIQUE INDEX uq_expense_user ON expense_splits(expense_id, user_id);
-CREATE INDEX idx_splits_user ON expense_splits(user_id);
-```
-
----
-
-## Admin Capabilities
-
-Admins can:
-
-* Edit any expense
-* Delete any expense
-
----
-
-## Safe Edit Strategy (VERY IMPORTANT)
-
-Never directly modify financial data.
-
-### Instead:
-
-1. Soft delete old expense (`deleted_at`)
-2. Insert new expense
-3. Recreate splits
-4. Recreate ledger entries
-
----
-
-## Edge Cases
-
-* Editing after partial payment → must rebalance ledger
-* Removing a participant → adjust balances
-* Changing payer → full recalculation
-* Split mismatch → reject request
-
----
-
-# Phase 3 — Ledger System
-
-## Table
-
-### ledger_entries
-
-* id (PK)
-* group_id
-* user_id
 * amount (BIGINT)
-* reference_type ENUM('expense','payment')
-* reference_id
-* created_at
-
----
-
-## Indexes
-
-```sql
-CREATE INDEX idx_ledger_group_user ON ledger_entries(group_id, user_id);
-CREATE INDEX idx_ledger_reference ON ledger_entries(reference_type, reference_id);
-CREATE INDEX idx_ledger_group ON ledger_entries(group_id);
-```
 
 ---
 
 ## Rules
 
-* Append-only (no updates/deletes)
-* Every expense/payment must generate ledger entries
-* Sum of ledger per group should always equal zero
-
----
-
-## Admin Controls
-
-Admins can:
-
-* Reverse entries (not delete)
-
-### Reversal Strategy
-
-* Insert opposite ledger entries
-* Mark original reference as reversed
+* Sum of splits = total amount
+* Only group members allowed
 
 ---
 
 ## Edge Cases
 
-* Duplicate ledger entries → use transactions + idempotency
-* Ledger imbalance → trigger reconciliation job
+* Duplicate participants
+* Payer not in group
+* Editing expense after settlement
+* Removing participant mid-history
+
+---
+
+## Edit Strategy
+
+Never mutate:
+
+1. Soft delete old expense
+2. Create new expense
+3. Recreate splits
+4. Recreate ledger
+
+---
+
+# Phase 3 — Ledger (Core Engine)
+
+## Table
+
+### ledger_entries
+
+* id
+* group_id
+* user_id
+* amount (BIGINT)
+* reference_type (expense/payment)
+* reference_id
+* created_at
+
+---
+
+## Rules
+
+* Append-only
+* Never update/delete
+* Group sum must always be 0
+
+---
+
+## Edge Cases
+
+* Duplicate insertion → use transactions
+* Partial failures → rollback
+* Ledger mismatch → reconciliation job
 
 ---
 
@@ -202,32 +225,20 @@ Admins can:
 
 ### payments
 
-* id (PK)
+* id
 * group_id
 * payer_id
 * receiver_id
-* amount (BIGINT)
-* note
+* amount
 * created_at
-* reversed_at (nullable)
+* reversed_at
 
 ---
 
-## Indexes
+## Rules
 
-```sql
-CREATE INDEX idx_payments_group ON payments(group_id);
-CREATE INDEX idx_payments_payer ON payments(payer_id);
-CREATE INDEX idx_payments_receiver ON payments(receiver_id);
-```
-
----
-
-## Admin Capabilities
-
-Admins can:
-
-* Reverse payments (not delete)
+* Payments offset debt
+* Never delete → only reverse
 
 ---
 
@@ -235,68 +246,172 @@ Admins can:
 
 * Partial payments
 * Overpayment
-* Duplicate payments (use idempotency)
-* Reversal after multiple linked expenses
+* Duplicate payment submission
+* Payment reversal after multiple splits
 
 ---
 
-# Phase 5 — UPI Sharing
+# Phase 5 — Payment Identity (UPI / QR)
 
-## Tables
+## Design
 
-### user_payment_methods
-
-* id (PK)
-* user_id
-* type ENUM('upi_id','upi_qr')
-* upi_id
-* qr_url
-* is_primary
-* created_at
+👉 One user = one payment identity
 
 ---
 
-### group_payment_visibility (optional)
+## Table
 
-* id (PK)
-* group_id
-* user_id
-* payment_method_id
-* visible
+### user_payment_identity
 
----
-
-## Indexes
-
-```sql
-CREATE INDEX idx_payment_methods_user ON user_payment_methods(user_id);
-CREATE INDEX idx_group_payment_visibility_group ON group_payment_visibility(group_id);
-```
+* user_id (PK)
+* upi_id (nullable)
+* qr_url (nullable)
+* updated_at
 
 ---
 
 ## Rules
 
-* No payment verification
-* Metadata only
+* User can add/update/delete
+* At least one of:
+
+  * upi_id
+  * qr_url
 
 ---
 
 ## Edge Cases
 
-* Invalid UPI
-* Multiple primary methods (prevent via constraint)
-* Deleted QR but cached in UI
+* Both null → delete case
+* Invalid UPI → reject
+* QR replaced → overwrite
+* No payment identity → allowed
 
 ---
 
-# Phase 6 — Derived Balances
+# Phase 6 — User Search & Invite System
+
+## Table
+
+### group_invites
+
+* id
+* group_id
+* invited_by
+* invitee_contact
+* invite_token
+* status ENUM('pending','accepted','expired')
+* expires_at
+* created_at
+
+---
+
+## Flow
+
+### Existing User
+
+* Add directly to group
+
+---
+
+### New User
+
+1. Create invite
+2. Generate link:
+
+   ```
+   /invite?token=XYZ
+   ```
+3. Send via WhatsApp/SMS/Email
+
+---
+
+### On Signup
+
+* Validate contact
+* Add to group
+* Mark invite accepted
+
+---
+
+## Edge Cases
+
+* Duplicate invites
+* Expired token
+* Wrong email/phone signup
+* Already joined user
+* Link reuse
+
+---
+
+# Phase 7 — Activity Log
+
+## Table
+
+### group_activities
+
+* id
+* group_id
+* actor_id
+* type
+* reference_id
+* metadata (JSON)
+* created_at
+
+---
+
+## Types
+
+* group_created
+* user_added
+* user_removed
+* expense_added
+* expense_updated
+* expense_deleted
+* payment_made
+* payment_reversed
+* role_updated
+
+---
+
+## Edge Cases
+
+* Bulk operations → log individually
+* Editing expense → log both old + new
+* Invite join → mark source
+
+---
+
+# Phase 8 — Admin Management
+
+## Features
+
+* Promote member → admin
+* Demote admin → member
+
+---
+
+## Rules
+
+* At least one admin required
+* Only admins can manage roles
+
+---
+
+## Edge Cases
+
+* Last admin cannot demote
+* Concurrent updates → use locking
+* Removed users cannot be promoted
+
+---
+
+# Phase 9 — Derived Balances
 
 ## Table
 
 ### group_balances
 
-* id (PK)
 * group_id
 * user_id
 * balance
@@ -304,144 +419,76 @@ CREATE INDEX idx_group_payment_visibility_group ON group_payment_visibility(grou
 
 ---
 
-## Indexes
+## Rules
 
-```sql
-CREATE UNIQUE INDEX uq_group_balance ON group_balances(group_id, user_id);
-CREATE INDEX idx_group_balance_group ON group_balances(group_id);
-```
-
----
-
-## Strategy
-
-* Updated on:
-
-  * expense creation/edit/delete
-  * payment
+* Derived from ledger
+* Used for fast reads
 
 ---
 
 ## Safety
 
-### Reconciliation Job
-
-Run periodically:
-
-```sql
-SELECT user_id, SUM(amount)
-FROM ledger_entries
-WHERE group_id = ?
-GROUP BY user_id;
-```
-
-Compare with stored balances.
+Recalculate periodically from ledger
 
 ---
 
-# Phase 7 — Concurrency & Idempotency
+# Phase 10 — Concurrency & Idempotency
 
 ## Table
 
 ### idempotency_keys
 
-* key (PK)
+* key
 * user_id
 * request_hash
 * created_at
 
 ---
 
-## Indexes
-
-```sql
-CREATE INDEX idx_idempotency_user ON idempotency_keys(user_id);
-```
-
----
-
 ## Rules
 
-* Every write operation must:
-
-  * Use transaction
-  * Include idempotency key
+* All writes must be transactional
+* Prevent duplicate operations
 
 ---
 
 ## Edge Cases
 
-* Double API calls
 * Retry after timeout
-* Parallel edits
+* Double clicks
+* Parallel requests
 
 ---
 
-# Admin-Specific Features Summary
+# 🧠 Hidden Edge Cases (Most People Miss)
 
-Admins can:
+### Financial
 
-* Edit/delete expenses (via safe replacement)
-* Reverse payments
-* Manage group members
-* Resolve disputes
-
-Admins cannot:
-
-* Directly modify ledger entries
-* Delete financial history
+* Floating point drift
+* Re-editing expense after payment
+* Cyclic debts
 
 ---
 
-# Performance Strategy
+### Membership
 
-## Key Optimizations
-
-1. Index-heavy reads:
-
-   * group_id
-   * user_id
-   * created_at
-
-2. Avoid full table scans:
-
-   * Always filter by group_id
-
-3. Use pagination:
-
-   * Expenses list
-   * Activity feed
-
-4. Add caching later:
-
-   * Redis for balances
+* User removed with pending balance
+* User added after many expenses
 
 ---
 
-# Critical Design Principles
+### Sync
 
-## 1. Ledger Integrity > Feature Speed
-
-## 2. No Direct Mutations
-
-All edits = new entries
-
-## 3. Strong Consistency
-
-Use DB transactions everywhere
-
-## 4. Derived Data is Replaceable
-
-Balances can be recalculated anytime
+* Duplicate expense creation
+* Partial DB writes
 
 ---
 
-# Biggest Risks
+### Trust Issues
 
-* Editing expenses after payments
-* Ledger inconsistency
-* Concurrency bugs
-* Silent balance drift
+* Incorrect rounding
+* Missing activity logs
+* Silent balance mismatch
 
 ---
 
@@ -450,35 +497,35 @@ Balances can be recalculated anytime
 ```text
 Users
   ↓
-Groups → Expenses → Splits
-                   ↓
-              Ledger Entries (truth)
-                   ↓
-             Group Balances (cache)
-                   ↓
-        UPI Methods (metadata only)
+Group Members (role + status)
+  ↓
+Expenses → Splits
+  ↓
+Ledger Entries (source of truth)
+  ↓
+Payments
+  ↓
+Activity Logs
+  ↓
+Group Balances (derived)
+  ↓
+Payment Identity (UPI/QR)
 ```
-
----
-
-# Recommended Next Steps
-
-1. Implement ledger + expense flow with transactions
-2. Add admin edit/reversal logic
-3. Build reconciliation job early
-4. Add indexes before scaling
 
 ---
 
 # Final Note
 
-If ledger correctness is maintained:
+If you get these 3 right:
 
-* System is reliable
-* Bugs are recoverable
+1. Ledger correctness
+2. Split precision
+3. Transaction safety
 
-If ledger breaks:
+→ Your system will be solid.
 
-* Data becomes untrustworthy
+If you get them wrong:
 
-Design everything around protecting it.
+→ Users will stop trusting your app.
+
+Design everything to protect correctness.
