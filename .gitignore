@@ -8,8 +8,11 @@ xcuserdata/
 *.xcworkspace
 Package.resolved
 
-# ── Generated documentation (written at startup) ─
-Public/docs/
+# ── Generated API reference (regenerated at boot) ─
+# Everything under Public/ is produced by RouteDocumentationGenerator.
+# Keep favicon.ico tracked so the browser tab has a real icon.
+Public/*
+!Public/favicon.ico
 
 # ── Database files ────────────────────────────────
 *.sqlite
