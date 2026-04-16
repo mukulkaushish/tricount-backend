@@ -24,3 +24,14 @@ struct PaymentIdentityResponse: Content {
         case updatedAt = "updated_at"
     }
 }
+
+extension UserPaymentIdentity {
+    func toResponse() throws -> PaymentIdentityResponse {
+        PaymentIdentityResponse(
+            userId: try requireID(),
+            upiId: upiId,
+            qrUrl: qrUrl,
+            updatedAt: updatedAt ?? Date()
+        )
+    }
+}

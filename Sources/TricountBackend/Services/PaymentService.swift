@@ -1,11 +1,15 @@
 import Fluent
 import Vapor
 
-struct PaymentService: Content {
-    static func createPayment(_ req: Request, groupID: UUID, _ input: CreatePaymentRequest, actorID: UUID) async throws -> Payment {
-        try await GroupService.assertUserIsMember(req, groupID: groupID, userID: actorID)
-        try await GroupService.assertUserIsMember(req, groupID: groupID, userID: input.payerId)
-        try await GroupService.assertUserIsMember(req, groupID: groupID, userID: input.receiverId)
+struct PaymentService {
+    let req: Request
+
+    private var groups: GroupService { req.services.groups }
+
+    func create(groupID: UUID, _ input: CreatePaymentRequest, actorID: UUID) async throws -> Payment {
+        try await groups.assertUserIsMember(groupID: groupID, userID: actorID)
+        try await groups.assertUserIsMember(groupID: groupID, userID: input.payerId)
+        try await groups.assertUserIsMember(groupID: groupID, userID: input.receiverId)
 
         let payment = Payment(
             groupID: groupID,
@@ -35,23 +39,20 @@ struct PaymentService: Content {
         )
         try await receiverLedger.save(on: req.db)
 
-        try await GroupService.logActivity(req, groupID: groupID, actorID: actorID, type: "PAYMENT_CREATED", referenceId: paymentID)
+        try await groups.logActivity(groupID: groupID, actorID: actorID, type: "PAYMENT_CREATED", referenceId: paymentID)
 
         return payment
     }
 
-    static func getPayment(_ req: Request, paymentID: UUID) async throws -> Payment {
-        guard let payment = try await Payment.find(paymentID, on: req.db) else {
-            throw Abort(.notFound, reason: "Payment not found")
-        }
-        return payment
+    func get(paymentID: UUID) async throws -> Payment {
+        try await Payment.requireFind(paymentID, on: req.db, notFoundMessage: "Payment not found")
     }
 
-    static func reversePayment(_ req: Request, paymentID: UUID, actorID: UUID) async throws -> Payment {
-        let payment = try await getPayment(req, paymentID: paymentID)
+    func reverse(paymentID: UUID, actorID: UUID) async throws -> Payment {
+        let payment = try await get(paymentID: paymentID)
         let groupID = payment.$group.id
 
-        try await GroupService.assertUserIsMember(req, groupID: groupID, userID: actorID)
+        try await groups.assertUserIsMember(groupID: groupID, userID: actorID)
 
         guard payment.reversedAt == nil else {
             throw Abort(.badRequest, reason: "Payment already reversed")
@@ -66,13 +67,13 @@ struct PaymentService: Content {
             .filter(\.$referenceId == paymentID)
             .delete()
 
-        try await GroupService.logActivity(req, groupID: groupID, actorID: actorID, type: "PAYMENT_REVERSED", referenceId: paymentID)
+        try await groups.logActivity(groupID: groupID, actorID: actorID, type: "PAYMENT_REVERSED", referenceId: paymentID)
 
         return payment
     }
 
-    static func listPayments(_ req: Request, groupID: UUID) async throws -> [Payment] {
-        return try await Payment
+    func list(groupID: UUID) async throws -> [Payment] {
+        try await Payment
             .query(on: req.db)
             .filter(\.$group.$id == groupID)
             .filter(\.$reversedAt == nil)

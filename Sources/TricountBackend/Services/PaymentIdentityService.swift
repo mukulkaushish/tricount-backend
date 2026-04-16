@@ -1,8 +1,10 @@
 import Fluent
 import Vapor
 
-struct PaymentIdentityService: Content {
-    static func setOrUpdatePaymentIdentity(_ req: Request, userID: UUID, _ input: UpdatePaymentIdentityRequest) async throws -> UserPaymentIdentity {
+struct PaymentIdentityService {
+    let req: Request
+
+    func setOrUpdate(userID: UUID, _ input: UpdatePaymentIdentityRequest) async throws -> UserPaymentIdentity {
         let identity: UserPaymentIdentity
 
         if let existing = try await UserPaymentIdentity.find(userID, on: req.db) {
@@ -22,17 +24,15 @@ struct PaymentIdentityService: Content {
         return identity
     }
 
-    static func getPaymentIdentity(_ req: Request, userID: UUID) async throws -> UserPaymentIdentity {
+    func get(userID: UUID) async throws -> UserPaymentIdentity {
         guard let identity = try await UserPaymentIdentity.find(userID, on: req.db) else {
             throw Abort(.notFound, reason: "Payment identity not found")
         }
         return identity
     }
 
-    static func deletePaymentIdentity(_ req: Request, userID: UUID) async throws {
-        guard let identity = try await UserPaymentIdentity.find(userID, on: req.db) else {
-            throw Abort(.notFound, reason: "Payment identity not found")
-        }
+    func delete(userID: UUID) async throws {
+        let identity = try await get(userID: userID)
         try await identity.delete(on: req.db)
     }
 }

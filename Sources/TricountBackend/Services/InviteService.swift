@@ -2,31 +2,31 @@ import Fluent
 import Vapor
 import Foundation
 
-struct InviteService: Content {
-    static func generateInviteToken() -> String {
-        return UUID().uuidString
-    }
+struct InviteService {
+    let req: Request
 
-    static func createInvite(_ req: Request, groupID: UUID, _ input: CreateInviteRequest, invitedByID: UUID) async throws -> GroupInvite {
-        try await GroupService.assertUserIsAdmin(req, groupID: groupID, userID: invitedByID)
+    private var groups: GroupService { req.services.groups }
+
+    func create(groupID: UUID, _ input: CreateInviteRequest, invitedByID: UUID) async throws -> GroupInvite {
+        try await groups.assertUserIsAdmin(groupID: groupID, userID: invitedByID)
 
         let expiresAt = Date().addingTimeInterval(7 * 24 * 60 * 60)
         let invite = GroupInvite(
             groupID: groupID,
             invitedByID: invitedByID,
             inviteeContact: input.inviteeContact,
-            inviteToken: generateInviteToken(),
+            inviteToken: UUID().uuidString,
             status: "pending",
             expiresAt: expiresAt
         )
         try await invite.save(on: req.db)
 
-        try await GroupService.logActivity(req, groupID: groupID, actorID: invitedByID, type: "INVITE_CREATED", referenceId: try invite.requireID())
+        try await groups.logActivity(groupID: groupID, actorID: invitedByID, type: "INVITE_CREATED", referenceId: try invite.requireID())
 
         return invite
     }
 
-    static func getInviteByToken(_ req: Request, token: String) async throws -> GroupInvite {
+    func getByToken(_ token: String) async throws -> GroupInvite {
         guard let invite = try await GroupInvite
             .query(on: req.db)
             .filter(\.$inviteToken == token)
@@ -45,8 +45,8 @@ struct InviteService: Content {
         return invite
     }
 
-    static func acceptInvite(_ req: Request, _ input: AcceptInviteRequest, userID: UUID) async throws {
-        let invite = try await getInviteByToken(req, token: input.inviteToken)
+    func accept(_ input: AcceptInviteRequest, userID: UUID) async throws {
+        let invite = try await getByToken(input.inviteToken)
 
         let existingMember = try await GroupMember
             .query(on: req.db)
@@ -70,11 +70,11 @@ struct InviteService: Content {
         invite.status = "accepted"
         try await invite.update(on: req.db)
 
-        try await GroupService.logActivity(req, groupID: invite.$group.id, actorID: userID, type: "INVITE_ACCEPTED", referenceId: try invite.requireID())
+        try await groups.logActivity(groupID: invite.$group.id, actorID: userID, type: "INVITE_ACCEPTED", referenceId: try invite.requireID())
     }
 
-    static func listUserInvites(_ req: Request, userID: UUID) async throws -> [GroupInvite] {
-        return try await GroupInvite
+    func listForUser(userID: UUID) async throws -> [GroupInvite] {
+        try await GroupInvite
             .query(on: req.db)
             .filter(\.$inviteeContact != "")
             .filter(\.$status == "pending")

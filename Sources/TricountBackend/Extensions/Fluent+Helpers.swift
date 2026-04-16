@@ -8,3 +8,12 @@ extension QueryBuilder {
         return model
     }
 }
+
+extension Model where IDValue == UUID {
+    static func requireFind(_ id: UUID, on db: any Database, notFoundMessage: String? = nil) async throws -> Self {
+        guard let model = try await find(id, on: db) else {
+            throw Abort(.notFound, reason: notFoundMessage ?? "\(Self.self) not found")
+        }
+        return model
+    }
+}

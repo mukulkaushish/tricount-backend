@@ -3,50 +3,35 @@ import Fluent
 
 struct ExpenseController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
-        let groups = routes.grouped("groups", ":id", "expenses")
+        let expenses = routes
+            .grouped("groups", ":id")
+            .grouped(JWTAuthMiddleware())
+            .grouped(GroupMemberMiddleware())
+            .grouped("expenses")
 
-        groups.post(use: createExpense)
-        groups.get(use: listExpenses)
-        groups.get(":expenseId", use: getExpense)
-        groups.put(":expenseId", use: updateExpense)
-        groups.delete(":expenseId", use: deleteExpense)
+        expenses.post(use: createExpense)
+        expenses.get(use: listExpenses)
+        expenses.get(":expenseId", use: getExpense)
+        expenses.put(":expenseId", use: updateExpense)
+        expenses.delete(":expenseId", use: deleteExpense)
     }
 
     func createExpense(req: Request) async throws -> Response {
-        let payload = try req.auth.require(UserJWTPayload.self)
-        guard let groupID = req.parameters.get("id", as: UUID.self) else {
-            throw Abort(.badRequest, reason: "Invalid group ID")
-        }
+        let ctx = try req.groupContext
 
         let input = try req.content.decode(CreateExpenseRequest.self)
-        let expense = try await ExpenseService.createExpense(req, groupID: groupID, input, actorID: UUID(uuidString: payload.userId)!)
+        let expense = try await req.services.expenses.create(groupID: ctx.groupID, input, actorID: ctx.userID)
 
-        let splits = try await ExpenseService.getExpenseSplits(req, expenseID: try expense.requireID())
-        var splitResponses: [ExpenseSplitResponse] = []
-
-        for split in splits {
-            guard let user = try await User.find(try split.$user.id, on: req.db) else {
-                throw Abort(.notFound, reason: "User not found")
-            }
-
-            splitResponses.append(ExpenseSplitResponse(
-                id: try split.requireID(),
-                user: UserBasicInfo(id: try user.requireID(), displayName: user.displayName, email: user.email, avatarUrl: nil),
-                amount: split.amount
-            ))
-        }
-
-        guard let paidByUser = try await User.find(try expense.$paidBy.id, on: req.db) else {
-            throw Abort(.notFound, reason: "Payer not found")
-        }
+        let splitResponses = try await buildSplitResponses(req, expenseID: try expense.requireID())
+        let paidByUser = try await User.requireFind(expense.$paidBy.id, on: req.db, notFoundMessage: "Payer not found")
 
         let response = CreateExpenseResponse(
             id: try expense.requireID(),
-            groupId: groupID,
+            groupId: ctx.groupID,
             title: expense.title,
             amount: expense.amount,
             currency: expense.currency,
-            paidBy: UserBasicInfo(id: try paidByUser.requireID(), displayName: paidByUser.displayName, email: paidByUser.email, avatarUrl: nil),
+            paidBy: try paidByUser.toBasicInfo(),
             splits: splitResponses,
             notes: expense.notes,
             createdAt: expense.createdAt ?? Date()
@@ -58,27 +43,19 @@ struct ExpenseController: RouteCollection {
     }
 
     func listExpenses(req: Request) async throws -> ListExpensesResponse {
-        let payload = try req.auth.require(UserJWTPayload.self)
-        guard let groupID = req.parameters.get("id", as: UUID.self) else {
-            throw Abort(.badRequest, reason: "Invalid group ID")
-        }
+        let ctx = try req.groupContext
 
-        try await GroupService.assertUserIsMember(req, groupID: groupID, userID: UUID(uuidString: payload.userId)!)
-
-        let expenses = try await ExpenseService.listExpenses(req, groupID: groupID)
+        let expenses = try await req.services.expenses.list(groupID: ctx.groupID)
         var responses: [ExpenseListResponse] = []
 
         for expense in expenses {
-            guard let paidByUser = try await User.find(try expense.$paidBy.id, on: req.db) else {
-                throw Abort(.notFound, reason: "Payer not found")
-            }
-
+            let paidByUser = try await User.requireFind(expense.$paidBy.id, on: req.db, notFoundMessage: "Payer not found")
             responses.append(ExpenseListResponse(
                 id: try expense.requireID(),
                 title: expense.title,
                 amount: expense.amount,
                 currency: expense.currency,
-                paidBy: UserBasicInfo(id: try paidByUser.requireID(), displayName: paidByUser.displayName, email: paidByUser.email, avatarUrl: nil),
+                paidBy: try paidByUser.toBasicInfo(),
                 createdAt: expense.createdAt ?? Date()
             ))
         }
@@ -87,33 +64,49 @@ struct ExpenseController: RouteCollection {
     }
 
     func getExpense(req: Request) async throws -> ExpenseDetailsResponse {
-        let payload = try req.auth.require(UserJWTPayload.self)
-        guard let groupID = req.parameters.get("id", as: UUID.self),
-              let expenseID = req.parameters.get("expenseId", as: UUID.self) else {
-            throw Abort(.badRequest, reason: "Invalid parameters")
-        }
+        let ctx = try req.groupContext
+        let expenseID = try req.requireUUIDParameter("expenseId")
+        let expense = try await req.services.expenses.get(expenseID: expenseID)
+        return try await buildDetailsResponse(req, expense: expense, groupID: ctx.groupID)
+    }
 
-        try await GroupService.assertUserIsMember(req, groupID: groupID, userID: UUID(uuidString: payload.userId)!)
+    func updateExpense(req: Request) async throws -> ExpenseDetailsResponse {
+        let ctx = try req.groupContext
+        let expenseID = try req.requireUUIDParameter("expenseId")
 
-        let expense = try await ExpenseService.getExpense(req, expenseID: expenseID)
-        guard let paidByUser = try await User.find(try expense.$paidBy.id, on: req.db) else {
-            throw Abort(.notFound, reason: "Payer not found")
-        }
+        let input = try req.content.decode(UpdateExpenseRequest.self)
+        let expense = try await req.services.expenses.update(expenseID: expenseID, input, actorID: ctx.userID)
+        return try await buildDetailsResponse(req, expense: expense, groupID: ctx.groupID)
+    }
 
-        let splits = try await ExpenseService.getExpenseSplits(req, expenseID: expenseID)
-        var splitResponses: [ExpenseSplitResponse] = []
+    func deleteExpense(req: Request) async throws -> HTTPStatus {
+        let ctx = try req.groupContext
+        let expenseID = try req.requireUUIDParameter("expenseId")
+        try await req.services.expenses.delete(expenseID: expenseID, actorID: ctx.userID)
+        return .ok
+    }
+
+    // MARK: - Private Helpers
+
+    private func buildSplitResponses(_ req: Request, expenseID: UUID) async throws -> [ExpenseSplitResponse] {
+        let splits = try await req.services.expenses.getSplits(expenseID: expenseID)
+        var responses: [ExpenseSplitResponse] = []
 
         for split in splits {
-            guard let user = try await User.find(try split.$user.id, on: req.db) else {
-                throw Abort(.notFound, reason: "User not found")
-            }
-
-            splitResponses.append(ExpenseSplitResponse(
+            let user = try await User.requireFind(split.$user.id, on: req.db)
+            responses.append(ExpenseSplitResponse(
                 id: try split.requireID(),
-                user: UserBasicInfo(id: try user.requireID(), displayName: user.displayName, email: user.email, avatarUrl: nil),
+                user: try user.toBasicInfo(),
                 amount: split.amount
             ))
         }
+
+        return responses
+    }
+
+    private func buildDetailsResponse(_ req: Request, expense: Expense, groupID: UUID) async throws -> ExpenseDetailsResponse {
+        let paidByUser = try await User.requireFind(expense.$paidBy.id, on: req.db, notFoundMessage: "Payer not found")
+        let splitResponses = try await buildSplitResponses(req, expenseID: try expense.requireID())
 
         return ExpenseDetailsResponse(
             id: try expense.requireID(),
@@ -121,66 +114,11 @@ struct ExpenseController: RouteCollection {
             title: expense.title,
             amount: expense.amount,
             currency: expense.currency,
-            paidBy: UserBasicInfo(id: try paidByUser.requireID(), displayName: paidByUser.displayName, email: paidByUser.email, avatarUrl: nil),
+            paidBy: try paidByUser.toBasicInfo(),
             splits: splitResponses,
             notes: expense.notes,
             createdAt: expense.createdAt ?? Date(),
             updatedAt: expense.updatedAt ?? expense.createdAt ?? Date()
         )
-    }
-
-    func updateExpense(req: Request) async throws -> ExpenseDetailsResponse {
-        let payload = try req.auth.require(UserJWTPayload.self)
-        guard let groupID = req.parameters.get("id", as: UUID.self),
-              let expenseID = req.parameters.get("expenseId", as: UUID.self) else {
-            throw Abort(.badRequest, reason: "Invalid parameters")
-        }
-
-        let input = try req.content.decode(UpdateExpenseRequest.self)
-        let updatedExpense = try await ExpenseService.updateExpense(req, expenseID: expenseID, input, actorID: UUID(uuidString: payload.userId)!)
-
-        guard let paidByUser = try await User.find(try updatedExpense.$paidBy.id, on: req.db) else {
-            throw Abort(.notFound, reason: "Payer not found")
-        }
-
-        let splits = try await ExpenseService.getExpenseSplits(req, expenseID: try updatedExpense.requireID())
-        var splitResponses: [ExpenseSplitResponse] = []
-
-        for split in splits {
-            guard let user = try await User.find(try split.$user.id, on: req.db) else {
-                throw Abort(.notFound, reason: "User not found")
-            }
-
-            splitResponses.append(ExpenseSplitResponse(
-                id: try split.requireID(),
-                user: UserBasicInfo(id: try user.requireID(), displayName: user.displayName, email: user.email, avatarUrl: nil),
-                amount: split.amount
-            ))
-        }
-
-        return ExpenseDetailsResponse(
-            id: try updatedExpense.requireID(),
-            groupId: groupID,
-            title: updatedExpense.title,
-            amount: updatedExpense.amount,
-            currency: updatedExpense.currency,
-            paidBy: UserBasicInfo(id: try paidByUser.requireID(), displayName: paidByUser.displayName, email: paidByUser.email, avatarUrl: nil),
-            splits: splitResponses,
-            notes: updatedExpense.notes,
-            createdAt: updatedExpense.createdAt ?? Date(),
-            updatedAt: updatedExpense.updatedAt ?? updatedExpense.createdAt ?? Date()
-        )
-    }
-
-    func deleteExpense(req: Request) async throws -> HTTPStatus {
-        let payload = try req.auth.require(UserJWTPayload.self)
-        guard let groupID = req.parameters.get("id", as: UUID.self),
-              let expenseID = req.parameters.get("expenseId", as: UUID.self) else {
-            throw Abort(.badRequest, reason: "Invalid parameters")
-        }
-
-        try await GroupService.assertUserIsMember(req, groupID: groupID, userID: UUID(uuidString: payload.userId)!)
-        try await ExpenseService.deleteExpense(req, expenseID: expenseID, actorID: UUID(uuidString: payload.userId)!)
-        return .ok
     }
 }

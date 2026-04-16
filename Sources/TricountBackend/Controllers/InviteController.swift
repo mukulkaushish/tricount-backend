@@ -2,34 +2,32 @@ import Vapor
 import Fluent
 
 struct InviteController: RouteCollection {
-    func boot(routes: RoutesBuilder) throws {
-        let groups = routes.grouped("groups", ":id", "invites")
+    func boot(routes: any RoutesBuilder) throws {
+        let auth = routes.grouped(JWTAuthMiddleware())
 
-        groups.post(use: createInvite)
-        groups.get(use: listUserInvites)
+        // Group-scoped invite routes (require membership)
+        let groupInvites = auth
+            .grouped("groups", ":id")
+            .grouped(GroupMemberMiddleware())
+            .grouped("invites")
+        groupInvites.post(use: createInvite)
+        groupInvites.get(use: listUserInvites)
 
-        let inviteRoutes = routes.grouped("invites")
+        // Standalone invite routes (auth only, no group context)
+        let inviteRoutes = auth.grouped("invites")
         inviteRoutes.post("accept", use: acceptInvite)
         inviteRoutes.get(":token", use: getInviteByToken)
     }
 
     func createInvite(req: Request) async throws -> Response {
-        let payload = try req.auth.require(UserJWTPayload.self)
-        guard let groupID = req.parameters.get("id", as: UUID.self) else {
-            throw Abort(.badRequest, reason: "Invalid group ID")
-        }
+        let ctx = try req.groupContext
 
         let input = try req.content.decode(CreateInviteRequest.self)
-        let invite = try await InviteService.createInvite(req, groupID: groupID, input, invitedByID: UUID(uuidString: payload.userId)!)
-
-        guard let group = try await Group.find(groupID, on: req.db),
-              let inviter = try await User.find(invite.$invitedBy.id, on: req.db) else {
-            throw Abort(.notFound, reason: "Group or user not found")
-        }
+        let invite = try await req.services.invites.create(groupID: ctx.groupID, input, invitedByID: ctx.userID)
 
         let response = CreateInviteResponse(
             id: try invite.requireID(),
-            groupId: groupID,
+            groupId: ctx.groupID,
             inviteeContact: invite.inviteeContact,
             inviteToken: invite.inviteToken,
             status: invite.status,
@@ -43,21 +41,19 @@ struct InviteController: RouteCollection {
     }
 
     func listUserInvites(req: Request) async throws -> ListInvitesResponse {
-        let payload = try req.auth.require(UserJWTPayload.self)
+        let userID = try req.authenticatedUserID
 
-        let invites = try await InviteService.listUserInvites(req, userID: UUID(uuidString: payload.userId)!)
+        let invites = try await req.services.invites.listForUser(userID: userID)
         var responses: [InviteListResponse] = []
 
         for invite in invites {
-            guard let group = try await Group.find(invite.$group.id, on: req.db),
-                  let inviter = try await User.find(invite.$invitedBy.id, on: req.db) else {
-                throw Abort(.notFound, reason: "Group or user not found")
-            }
+            let group = try await Group.requireFind(invite.$group.id, on: req.db)
+            let inviter = try await User.requireFind(invite.$invitedBy.id, on: req.db)
 
             responses.append(InviteListResponse(
                 id: try invite.requireID(),
                 group: GroupBasicInfo(id: try group.requireID(), name: group.name, iconUrl: group.iconUrl),
-                invitedBy: UserBasicInfo(id: try inviter.requireID(), displayName: inviter.displayName, email: inviter.email, avatarUrl: nil),
+                invitedBy: try inviter.toBasicInfo(),
                 inviteeContact: invite.inviteeContact,
                 status: invite.status,
                 expiresAt: invite.expiresAt,
@@ -69,12 +65,11 @@ struct InviteController: RouteCollection {
     }
 
     func acceptInvite(req: Request) async throws -> AcceptInviteResponse {
-        let payload = try req.auth.require(UserJWTPayload.self)
+        let userID = try req.authenticatedUserID
         let input = try req.content.decode(AcceptInviteRequest.self)
 
-        try await InviteService.acceptInvite(req, input, userID: UUID(uuidString: payload.userId)!)
-
-        let invite = try await InviteService.getInviteByToken(req, token: input.inviteToken)
+        try await req.services.invites.accept(input, userID: userID)
+        let invite = try await req.services.invites.getByToken(input.inviteToken)
 
         return AcceptInviteResponse(
             groupId: invite.$group.id,
@@ -88,7 +83,7 @@ struct InviteController: RouteCollection {
             throw Abort(.badRequest, reason: "Invalid token")
         }
 
-        let invite = try await InviteService.getInviteByToken(req, token: token)
+        let invite = try await req.services.invites.getByToken(token)
 
         return CreateInviteResponse(
             id: try invite.requireID(),

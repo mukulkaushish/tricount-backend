@@ -4,155 +4,313 @@
 
 - **Never** add `Co-Authored-By` or any Claude/AI attribution to git commit messages.
 - **Never** run `git commit` or `git push` directly. Only suggest the commit message — the user will commit and push manually.
-- **Never** use aggressive sed/awk replacements across multiple files without reviewing the changes. Always use targeted edits with the Edit tool instead to avoid syntax corruption. For bulk refactors, read files first, understand patterns, and use the Edit tool with specific old_string/new_string pairs.
-- **All migrations must wrap operations in database transactions** so that if any step fails, the entire migration reverts automatically. This prevents the database from being left in an inconsistent state where migrations are marked complete but tables/constraints don't actually exist.
+- **Never** use aggressive sed/awk replacements across multiple files. Always use targeted edits with the Edit tool to avoid syntax corruption.
+- **All migrations must wrap operations in database transactions** so partial failures roll back automatically.
+- **Always follow the feature template** at `Documentation/FEATURE_TEMPLATE.md` when adding or modifying features.
+- **After any feature change**, update the relevant sections in this file (endpoints table, project layout, phase roadmap).
 
 ---
+
+## Overview
 
 Server-side Swift backend for the **Tricount** Flutter expense-splitting app.
 Built with [Vapor 4](https://vapor.codes), Fluent ORM, MySQL, and JWT auth.
 
 ---
 
-## Quick start
+## Quick Start
 
 ```bash
-# 1. Start MySQL (via Docker or local install)
 docker compose up mysql -d
-
-# 2. Resolve packages (must do this first after cloning or adding deps)
 swift package resolve
-
-# 3. Set required environment variables (see below)
 export JWT_SECRET="your-strong-random-secret-here"
-
-# 4. Run (auto-migrates the DB on startup)
 swift run
-
-# Server listens on http://localhost:8080
-# Health check: GET /
+# Server: http://localhost:8080 — Health: GET /
 ```
 
 ---
 
-## Environment variables
+## Environment Variables
 
 | Variable | Default | Description |
 |---|---|---|
-| `JWT_SECRET` | `change-me-in-production-use-env-var` | HMAC-SHA256 signing key — **always override in prod** |
+| `JWT_SECRET` | `change-me-in-production-use-env-var` | HMAC-SHA256 signing key |
 | `MYSQL_HOST` | `127.0.0.1` | MySQL hostname |
 | `MYSQL_PORT` | `3306` | MySQL port |
 | `MYSQL_USERNAME` | `tricount` | MySQL username |
 | `MYSQL_PASSWORD` | `tricount` | MySQL password |
 | `MYSQL_DATABASE` | `tricount` | MySQL database name |
-| `LOG_LEVEL` | `info` | Vapor log level (`debug`, `info`, `warning`, `error`) |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warning`, `error` |
 
 ---
 
-## Project layout
+## Project Layout
 
 ```
 Sources/TricountBackend/
-├── configure.swift          # App bootstrap: middleware, JWT, DB, migrations, routes
-├── routes.swift             # Top-level route registration (/v1/...)
-├── entrypoint.swift         # main()
+├── configure.swift                  # App bootstrap
+├── routes.swift                     # Top-level route registration (/v1/...)
+├── entrypoint.swift                 # main()
 │
 ├── Controllers/
-│   └── AuthController.swift # All /v1/auth/* route handlers
+│   ├── Auth/                        # Auth sub-controllers (session, MFA, passkeys, account)
+│   │   ├── AuthSessionController.swift
+│   │   ├── AuthAccountController.swift
+│   │   ├── AuthMFALoginController.swift
+│   │   ├── AuthMFASettingsController.swift
+│   │   └── AuthPasskeyManagementController.swift
+│   ├── AuthController.swift         # Auth route composition
+│   ├── GroupController.swift        # Groups & members
+│   ├── ExpenseController.swift      # Expenses & splits
+│   ├── PaymentController.swift      # Payments & reversals
+│   ├── InviteController.swift       # Group invites
+│   └── PaymentIdentityController.swift  # UPI/QR payment identity
 │
-├── DTOs/
-│   └── AuthDTOs.swift       # Request & response Codable structs
+├── DTOs/                            # Request & response Codable structs
+│   ├── AuthDTOs.swift
+│   ├── GroupDTOs.swift              # + UserBasicInfo, model→DTO extensions
+│   ├── ExpenseDTOs.swift
+│   ├── PaymentDTOs.swift
+│   ├── InviteDTOs.swift
+│   ├── ActivityDTOs.swift
+│   ├── PaymentIdentityDTOs.swift
+│   └── PasskeyDTOs.swift
 │
 ├── Middleware/
-│   ├── ErrorMiddleware.swift      # Global: all errors → standard JSON shape
-│   ├── JWTAuthMiddleware.swift    # Verifies Bearer JWT; defines AuthError
-│   ├── LoggingMiddleware.swift    # Structured request/response logging
-│   └── RateLimitMiddleware.swift  # Sliding-window in-memory rate limiter
+│   ├── ErrorMiddleware.swift        # All errors → standard JSON shape
+│   ├── JWTAuthMiddleware.swift      # Bearer JWT verification + AuthError enum
+│   ├── GroupMemberMiddleware.swift   # Validates membership, injects GroupContext
+│   ├── LoggingMiddleware.swift      # Structured request/response logging
+│   └── RateLimitMiddleware.swift    # Sliding-window in-memory rate limiter
 │
-├── Migrations/
-│   ├── CreateUser.swift           # users table
-│   └── CreateRefreshToken.swift   # refresh_tokens table
+├── Migrations/                      # All DB migrations (transactional)
 │
-├── Models/
-│   ├── User.swift                 # Fluent model
-│   └── RefreshToken.swift         # Fluent model (stores token hash, never raw)
+├── Models/                          # Fluent models
+│   ├── User.swift
+│   ├── RefreshToken.swift
+│   ├── Group.swift
+│   ├── GroupMember.swift
+│   ├── GroupActivity.swift
+│   ├── GroupInvite.swift
+│   ├── Expense.swift
+│   ├── ExpenseSplit.swift
+│   ├── LedgerEntry.swift
+│   ├── Payment.swift
+│   ├── UserPaymentIdentity.swift
+│   └── ...                          # MFA, passkey, OTP models
+│
+├── Extensions/
+│   ├── Request+ApplicationHelpers.swift  # authenticatedUserID, requireUUIDParameter
+│   ├── Request+ResponseHelpers.swift     # Response.json(), dataResponse()
+│   ├── Fluent+Helpers.swift              # Model.requireFind(), QueryBuilder.firstOrThrow()
+│   ├── Constants.swift                   # TokenLifetime values
+│   └── ...
 │
 ├── Payload/
-│   └── UserJWTPayload.swift       # JWTPayload struct + req.jwtPayload helper
+│   └── UserJWTPayload.swift         # JWT payload + req.jwtPayload helper
 │
-└── Services/
-    ├── AuthService.swift          # Login, register, Google, refresh, logout
-    └── GoogleAuthService.swift    # Verifies Google ID token via tokeninfo API
+├── Services/
+│   ├── ResourceServices.swift       # Facade: req.services.groups/expenses/payments/...
+│   ├── GroupService.swift           # Group CRUD, members, activity logging
+│   ├── ExpenseService.swift         # Expense CRUD, splits, ledger entries
+│   ├── PaymentService.swift         # Payment CRUD, reversals, ledger entries
+│   ├── InviteService.swift          # Invite create, accept, token validation
+│   ├── PaymentIdentityService.swift # UPI/QR identity management
+│   ├── BalanceService.swift         # Balance computation, debt simplification
+│   ├── AuthServices.swift           # Facade: req.authServices.session/account/mfa/...
+│   ├── AuthService.swift            # Core auth logic (login, register, social)
+│   ├── AuthService+Session.swift    # Login, register, refresh, social sign-in
+│   ├── AuthService+Account.swift    # Profile, email verification, logout
+│   ├── AuthService+MFA.swift        # MFA enable/disable, email/phone/authenticator
+│   ├── AuthService+Recovery.swift   # Password reset, backup codes
+│   ├── PasskeyService.swift         # WebAuthn passkey operations
+│   └── ...
+│
+└── Documentation/
+    └── DocumentedRoutesBuilder.swift  # Auto-docs + bearerProtected() helper
 ```
 
 ---
 
-## API endpoints (Phase 2 — Auth)
+## Architecture Patterns
 
-Base URL: `GET /v1`
+### Service Layer (Dependency Inversion)
 
-| Method | Path | Auth | Rate limit |
-|---|---|---|---|
-| `POST` | `/v1/auth/login` | — | 10/15 min per IP |
-| `POST` | `/v1/auth/register` | — | 5/hour per IP |
-| `POST` | `/v1/auth/forgot-password` | — | 3/hour per email |
-| `POST` | `/v1/auth/google` | — | 20/15 min per IP |
-| `POST` | `/v1/auth/refresh` | — | 30/hour per token |
-| `GET` | `/v1/auth/me` | Bearer JWT | — |
-| `POST` | `/v1/auth/logout` | Bearer JWT | — |
+All services are instance-based, accessed via request:
+```swift
+// Resource services
+req.services.groups.create(input, createdByID: userID)
+req.services.expenses.list(groupID: groupID)
+req.services.balances.simplifyDebts(groupID: groupID)
 
-Full contract: `API_CONTRACT.md`
+// Auth services
+req.authServices.session.login(dto: body)
+req.authServices.account.currentUser()
+```
 
----
+Services hold `req: Request` — no static methods, no `req` in every call.
 
-## Architecture decisions
+### Middleware Chain
 
-### Rate limiting
-Actor-based in-memory sliding-window limiter (`RateLimitStore`). Each endpoint has its own
-`RateLimitMiddleware` instance with the limits from `API_CONTRACT.md`. Middleware returns
-`429 Too Many Requests` with a `Retry-After` header when exceeded.
+Group-scoped routes use layered middleware:
+```swift
+routes
+    .grouped("groups", ":id")
+    .grouped(JWTAuthMiddleware())       // Verifies JWT
+    .grouped(GroupMemberMiddleware())    // Validates membership → req.groupContext
+    .grouped("expenses")
+```
 
-**For production:** replace with a Redis-backed store to share limits across multiple instances.
+Handlers access context directly:
+```swift
+func getExpense(req: Request) async throws -> ExpenseDetailsResponse {
+    let ctx = try req.groupContext  // groupID, userID, member — pre-validated
+    let expense = try await req.services.expenses.get(expenseID: ...)
+    ...
+}
+```
 
-### Token strategy
-- **Access token:** JWT (HMAC-SHA256), expires in 1 hour. Stateless — no DB lookup needed.
-- **Refresh token:** 32-byte cryptographically random value, stored as a SHA-256 hash in `refresh_tokens`. Rotated on every use. Revoked on logout (all tokens for the user).
+### Model → Response Mapping
 
-### Error handling
-All errors flow through `TricountErrorMiddleware`, which converts `AuthError` and `AbortError`
-to the standard contract shape:
+Conversions live as extensions on models:
+```swift
+user.toBasicInfo()          // User → UserBasicInfo
+member.toResponse(with:)    // GroupMember + User → GroupMemberResponse
+identity.toResponse()       // UserPaymentIdentity → PaymentIdentityResponse
+```
+
+### Shared Helpers
+
+| Helper | Location | Replaces |
+|--------|----------|----------|
+| `req.authenticatedUserID` | `Request+ApplicationHelpers` | Manual JWT decode + UUID cast |
+| `req.requireUUIDParameter("id")` | `Request+ApplicationHelpers` | `guard let id = req.parameters.get(...)` |
+| `req.groupContext` | `GroupMemberMiddleware` | userID + groupID + assertMember |
+| `Model.requireFind(id, on:)` | `Fluent+Helpers` | `guard let x = try await X.find(...) else { throw }` |
+
+### Error Format
+
+All errors → standard JSON via `TricountErrorMiddleware`:
 ```json
 { "error": "CODE", "message": "Human message", "statusCode": 401 }
 ```
 
-### Google OAuth
-Validated via `https://www.googleapis.com/oauth2/v3/tokeninfo?id_token=<token>`.
-For production consider verifying the JWT locally using Google's public keys to avoid the
-extra network hop.
+Use `Abort(.status, reason:)` for ad-hoc errors.
+Use `AuthError` enum cases for auth-domain errors.
 
-### Password policy (enforced server-side)
-- 8–128 characters
-- At least 1 uppercase, 1 lowercase, 1 digit
+### Token Strategy
 
----
+- **Access:** JWT (HMAC-SHA256), 1-hour expiry, stateless
+- **Refresh:** 32-byte random, SHA-256 hashed in DB, rotated on use, revoked on logout
 
-## Adding a new endpoint
+### Ledger System
 
-1. Add the route to `AuthController.boot(routes:)` (or create a new `RouteCollection`).
-2. Add any new request/response types to `DTOs/`.
-3. Implement business logic in the relevant `Service`.
-4. Register the collection in `routes.swift` if new.
-5. Add or update a migration if the DB schema changes.
+All monetary operations write to `ledger_entries`. Balances are derived, never stored.
+Amounts are `Int64` in minor units (paise). Currency default: `INR`.
 
 ---
 
-## Running tests
+## API Endpoints
+
+### Auth (Public)
+
+| Method | Path | Rate Limit |
+|--------|------|------------|
+| `POST` | `/v1/auth/login` | 10/15min |
+| `POST` | `/v1/auth/register` | 5/hour |
+| `POST` | `/v1/auth/forgot-password` | 3/hour |
+| `POST` | `/v1/auth/reset-password` | — |
+| `POST` | `/v1/auth/google` | 20/15min |
+| `POST` | `/v1/auth/apple` | 20/15min |
+| `POST` | `/v1/auth/refresh` | 30/hour |
+| `POST` | `/v1/auth/mfa/*` | varies |
+| `POST` | `/v1/auth/passkeys/authenticate/*` | — |
+
+### Auth (Protected — Bearer JWT)
+
+| Method | Path |
+|--------|------|
+| `GET` | `/v1/auth/me` |
+| `POST` | `/v1/auth/logout` |
+| `POST` | `/v1/auth/verify-profile/*` |
+| `POST` | `/v1/auth/mfa/enable\|disable` |
+| `POST` | `/v1/auth/mfa/email/*` |
+| `POST` | `/v1/auth/mfa/phone/*` |
+| `POST` | `/v1/auth/mfa/authenticator-app/*` |
+| `POST` | `/v1/auth/mfa/backup-codes/*` |
+| `*` | `/v1/auth/passkeys/*` (management) |
+
+### Groups (Protected — Bearer JWT + Membership)
+
+| Method | Path | Notes |
+|--------|------|-------|
+| `POST` | `/v1/groups` | Create (no group context) |
+| `GET` | `/v1/groups` | List user's groups |
+| `GET` | `/v1/groups/:id` | Group details |
+| `PUT` | `/v1/groups/:id` | Update (admin only) |
+| `POST` | `/v1/groups/:id/members` | Add member (admin) |
+| `GET` | `/v1/groups/:id/members` | List members |
+| `DELETE` | `/v1/groups/:id/members/:userId` | Remove (admin) |
+| `PUT` | `/v1/groups/:id/members/:userId/role` | Change role (admin) |
+| `POST` | `/v1/groups/:id/leave` | Leave group |
+| `GET` | `/v1/groups/:id/activities` | Activity log |
+| `GET` | `/v1/groups/:id/balance` | Group balances |
+| `GET` | `/v1/groups/:id/balance/simplified` | Simplified debts |
+
+### Expenses (Protected — Bearer JWT + Membership)
+
+| Method | Path |
+|--------|------|
+| `POST` | `/v1/groups/:id/expenses` |
+| `GET` | `/v1/groups/:id/expenses` |
+| `GET` | `/v1/groups/:id/expenses/:expenseId` |
+| `PUT` | `/v1/groups/:id/expenses/:expenseId` |
+| `DELETE` | `/v1/groups/:id/expenses/:expenseId` |
+
+### Payments (Protected — Bearer JWT + Membership)
+
+| Method | Path |
+|--------|------|
+| `POST` | `/v1/groups/:id/payments` |
+| `GET` | `/v1/groups/:id/payments` |
+| `GET` | `/v1/groups/:id/payments/:paymentId` |
+| `POST` | `/v1/groups/:id/payments/:paymentId/reverse` |
+
+### Invites (Protected — Bearer JWT)
+
+| Method | Path | Notes |
+|--------|------|-------|
+| `POST` | `/v1/groups/:id/invites` | Create (admin, group-scoped) |
+| `GET` | `/v1/groups/:id/invites` | List (group-scoped) |
+| `POST` | `/v1/invites/accept` | Accept invite |
+| `GET` | `/v1/invites/:token` | Get invite by token |
+
+### Payment Identity (Protected — Bearer JWT)
+
+| Method | Path |
+|--------|------|
+| `POST` | `/v1/payment-identity` |
+| `GET` | `/v1/payment-identity` |
+| `DELETE` | `/v1/payment-identity` |
+
+---
+
+## Adding a New Feature
+
+1. Copy `Documentation/FEATURE_TEMPLATE.md` to `Documentation/features/[name].md`
+2. Fill out all sections in the template
+3. Follow the architecture checklist in the template
+4. Implementation order: Migration → Model → DTOs → Service → Controller → routes.swift
+5. Register service in `ResourceServices.swift` if new
+6. **Update this file** (endpoints, project layout, phase roadmap)
+
+---
+
+## Running Tests
 
 ```bash
 swift test
 ```
-
-Test target: `Tests/TricountBackendTests/`
 
 ---
 
@@ -162,17 +320,18 @@ Test target: `Tests/TricountBackendTests/`
 docker compose up --build
 ```
 
-See `docker-compose.yml` and `Dockerfile` for configuration.
-
 ---
 
-## Phase roadmap
+## Phase Roadmap
 
 | Phase | Status | Scope |
 |---|---|---|
 | 1 | Done | Project scaffold |
-| 2 | **In progress** | Auth (login, register, Google, refresh, logout) |
-| 3 | Planned | Groups & members |
-| 4 | Planned | Expenses |
-| 5 | Planned | Settlements |
-| 6 | Planned | Sync queue |
+| 2 | Done | Auth (login, register, Google, Apple, MFA, passkeys, refresh, logout) |
+| 3 | Done | Groups, members, activity log |
+| 4 | Done | Expenses, splits, ledger |
+| 5 | Done | Payments, reversals |
+| 6 | Done | Invites |
+| 7 | Done | Payment identity (UPI/QR) |
+| 8 | Done | Balance computation, debt simplification |
+| 9 | Planned | Sync queue |

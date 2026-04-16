@@ -2,34 +2,33 @@ import Vapor
 import Fluent
 
 struct PaymentController: RouteCollection {
-    func boot(routes: RoutesBuilder) throws {
-        let groups = routes.grouped("groups", ":id", "payments")
+    func boot(routes: any RoutesBuilder) throws {
+        let payments = routes
+            .grouped("groups", ":id")
+            .grouped(JWTAuthMiddleware())
+            .grouped(GroupMemberMiddleware())
+            .grouped("payments")
 
-        groups.post(use: createPayment)
-        groups.get(use: listPayments)
-        groups.get(":paymentId", use: getPayment)
-        groups.post(":paymentId", "reverse", use: reversePayment)
+        payments.post(use: createPayment)
+        payments.get(use: listPayments)
+        payments.get(":paymentId", use: getPayment)
+        payments.post(":paymentId", "reverse", use: reversePayment)
     }
 
     func createPayment(req: Request) async throws -> Response {
-        let payload = try req.auth.require(UserJWTPayload.self)
-        guard let groupID = req.parameters.get("id", as: UUID.self) else {
-            throw Abort(.badRequest, reason: "Invalid group ID")
-        }
+        let ctx = try req.groupContext
 
         let input = try req.content.decode(CreatePaymentRequest.self)
-        let payment = try await PaymentService.createPayment(req, groupID: groupID, input, actorID: UUID(uuidString: payload.userId)!)
+        let payment = try await req.services.payments.create(groupID: ctx.groupID, input, actorID: ctx.userID)
 
-        guard let payer = try await User.find(try payment.$payer.id, on: req.db),
-              let receiver = try await User.find(try payment.$receiver.id, on: req.db) else {
-            throw Abort(.notFound, reason: "User not found")
-        }
+        let payer = try await User.requireFind(payment.$payer.id, on: req.db)
+        let receiver = try await User.requireFind(payment.$receiver.id, on: req.db)
 
         let response = CreatePaymentResponse(
-                id: try payment.requireID(),
-            groupId: groupID,
-                payer: UserBasicInfo(id: try payer.requireID(), displayName: payer.displayName, email: payer.email, avatarUrl: nil),
-                receiver: UserBasicInfo(id: try receiver.requireID(), displayName: receiver.displayName, email: receiver.email, avatarUrl: nil),
+            id: try payment.requireID(),
+            groupId: ctx.groupID,
+            payer: try payer.toBasicInfo(),
+            receiver: try receiver.toBasicInfo(),
             amount: payment.amount,
             createdAt: payment.createdAt ?? Date()
         )
@@ -40,26 +39,19 @@ struct PaymentController: RouteCollection {
     }
 
     func listPayments(req: Request) async throws -> ListPaymentsResponse {
-        let payload = try req.auth.require(UserJWTPayload.self)
-        guard let groupID = req.parameters.get("id", as: UUID.self) else {
-            throw Abort(.badRequest, reason: "Invalid group ID")
-        }
+        let ctx = try req.groupContext
 
-        try await GroupService.assertUserIsMember(req, groupID: groupID, userID: UUID(uuidString: payload.userId)!)
-
-        let payments = try await PaymentService.listPayments(req, groupID: groupID)
+        let payments = try await req.services.payments.list(groupID: ctx.groupID)
         var responses: [PaymentListResponse] = []
 
         for payment in payments {
-            guard let payer = try await User.find(try payment.$payer.id, on: req.db),
-                  let receiver = try await User.find(try payment.$receiver.id, on: req.db) else {
-                throw Abort(.notFound, reason: "User not found")
-            }
+            let payer = try await User.requireFind(payment.$payer.id, on: req.db)
+            let receiver = try await User.requireFind(payment.$receiver.id, on: req.db)
 
             responses.append(PaymentListResponse(
                 id: try payment.requireID(),
-                payer: UserBasicInfo(id: try payer.requireID(), displayName: payer.displayName, email: payer.email, avatarUrl: nil),
-                receiver: UserBasicInfo(id: try receiver.requireID(), displayName: receiver.displayName, email: receiver.email, avatarUrl: nil),
+                payer: try payer.toBasicInfo(),
+                receiver: try receiver.toBasicInfo(),
                 amount: payment.amount,
                 createdAt: payment.createdAt ?? Date()
             ))
@@ -69,53 +61,30 @@ struct PaymentController: RouteCollection {
     }
 
     func getPayment(req: Request) async throws -> PaymentDetailsResponse {
-        let payload = try req.auth.require(UserJWTPayload.self)
-        guard let groupID = req.parameters.get("id", as: UUID.self),
-              let paymentID = req.parameters.get("paymentId", as: UUID.self) else {
-            throw Abort(.badRequest, reason: "Invalid parameters")
-        }
-
-        try await GroupService.assertUserIsMember(req, groupID: groupID, userID: UUID(uuidString: payload.userId)!)
-
-        let payment = try await PaymentService.getPayment(req, paymentID: paymentID)
-
-        guard let payer = try await User.find(try payment.$payer.id, on: req.db),
-              let receiver = try await User.find(try payment.$receiver.id, on: req.db) else {
-            throw Abort(.notFound, reason: "User not found")
-        }
-
-        return PaymentDetailsResponse(
-                id: try payment.requireID(),
-            groupId: groupID,
-                payer: UserBasicInfo(id: try payer.requireID(), displayName: payer.displayName, email: payer.email, avatarUrl: nil),
-                receiver: UserBasicInfo(id: try receiver.requireID(), displayName: receiver.displayName, email: receiver.email, avatarUrl: nil),
-            amount: payment.amount,
-            createdAt: payment.createdAt ?? Date(),
-            reversedAt: payment.reversedAt
-        )
+        let ctx = try req.groupContext
+        let paymentID = try req.requireUUIDParameter("paymentId")
+        let payment = try await req.services.payments.get(paymentID: paymentID)
+        return try await buildDetailsResponse(req, payment: payment, groupID: ctx.groupID)
     }
 
     func reversePayment(req: Request) async throws -> PaymentDetailsResponse {
-        let payload = try req.auth.require(UserJWTPayload.self)
-        guard let groupID = req.parameters.get("id", as: UUID.self),
-              let paymentID = req.parameters.get("paymentId", as: UUID.self) else {
-            throw Abort(.badRequest, reason: "Invalid parameters")
-        }
+        let ctx = try req.groupContext
+        let paymentID = try req.requireUUIDParameter("paymentId")
+        let payment = try await req.services.payments.reverse(paymentID: paymentID, actorID: ctx.userID)
+        return try await buildDetailsResponse(req, payment: payment, groupID: ctx.groupID)
+    }
 
-        try await GroupService.assertUserIsMember(req, groupID: groupID, userID: UUID(uuidString: payload.userId)!)
+    // MARK: - Private Helpers
 
-        let payment = try await PaymentService.reversePayment(req, paymentID: paymentID, actorID: UUID(uuidString: payload.userId)!)
-
-        guard let payer = try await User.find(try payment.$payer.id, on: req.db),
-              let receiver = try await User.find(try payment.$receiver.id, on: req.db) else {
-            throw Abort(.notFound, reason: "User not found")
-        }
+    private func buildDetailsResponse(_ req: Request, payment: Payment, groupID: UUID) async throws -> PaymentDetailsResponse {
+        let payer = try await User.requireFind(payment.$payer.id, on: req.db)
+        let receiver = try await User.requireFind(payment.$receiver.id, on: req.db)
 
         return PaymentDetailsResponse(
-                id: try payment.requireID(),
+            id: try payment.requireID(),
             groupId: groupID,
-                payer: UserBasicInfo(id: try payer.requireID(), displayName: payer.displayName, email: payer.email, avatarUrl: nil),
-                receiver: UserBasicInfo(id: try receiver.requireID(), displayName: receiver.displayName, email: receiver.email, avatarUrl: nil),
+            payer: try payer.toBasicInfo(),
+            receiver: try receiver.toBasicInfo(),
             amount: payment.amount,
             createdAt: payment.createdAt ?? Date(),
             reversedAt: payment.reversedAt

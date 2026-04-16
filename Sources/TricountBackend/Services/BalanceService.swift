@@ -1,8 +1,10 @@
 import Fluent
 import Vapor
 
-struct BalanceService: Content {
-    static func getGroupBalances(_ req: Request, groupID: UUID) async throws -> [UserBalanceResponse] {
+struct BalanceService {
+    let req: Request
+
+    func getGroupBalances(groupID: UUID) async throws -> [UserBalanceResponse] {
         let entries = try await LedgerEntry
             .query(on: req.db)
             .filter(\.$group.$id == groupID)
@@ -14,26 +16,11 @@ struct BalanceService: Content {
             balances[userId, default: 0] += entry.amount
         }
 
-        var results: [UserBalanceResponse] = []
-        for (userId, amount) in balances {
-            results.append(UserBalanceResponse(userId: userId, balance: amount, currency: "INR"))
-        }
-
-        return results
+        return balances.map { UserBalanceResponse(userId: $0.key, balance: $0.value, currency: "INR") }
     }
 
-    static func getUserBalance(_ req: Request, groupID: UUID, userID: UUID) async throws -> Int64 {
-        let entries = try await LedgerEntry
-            .query(on: req.db)
-            .filter(\.$group.$id == groupID)
-            .filter(\.$user.$id == userID)
-            .all()
-
-        return entries.reduce(0) { $0 + $1.amount }
-    }
-
-    static func simplifyDebts(_ req: Request, groupID: UUID) async throws -> [SimplifiedDebtResponse] {
-        let balances = try await getGroupBalances(req, groupID: groupID)
+    func simplifyDebts(groupID: UUID) async throws -> [SimplifiedDebtResponse] {
+        let balances = try await getGroupBalances(groupID: groupID)
 
         var creditors: [(UUID, Int64)] = []
         var debtors: [(UUID, Int64)] = []
@@ -49,6 +36,8 @@ struct BalanceService: Content {
         creditors.sort { $0.1 > $1.1 }
         debtors.sort { $0.1 > $1.1 }
 
+        guard !debtors.isEmpty, !creditors.isEmpty else { return [] }
+
         var simplified: [SimplifiedDebtResponse] = []
         var debtorIndex = 0
         var creditorIndex = 0
@@ -56,13 +45,13 @@ struct BalanceService: Content {
         var creditorAmount = creditors[creditorIndex].1
 
         while debtorIndex < debtors.count && creditorIndex < creditors.count {
-            let debtorId = debtors[debtorIndex].0
-            let creditorId = creditors[creditorIndex].0
             let transferAmount = min(debtorAmount, creditorAmount)
 
+            let fromUser = try await User.requireFind(debtors[debtorIndex].0, on: req.db)
+            let toUser = try await User.requireFind(creditors[creditorIndex].0, on: req.db)
             simplified.append(SimplifiedDebtResponse(
-                from: try await getUserBasicInfo(req, userID: debtorId),
-                to: try await getUserBasicInfo(req, userID: creditorId),
+                from: try fromUser.toBasicInfo(),
+                to: try toUser.toBasicInfo(),
                 amount: transferAmount
             ))
 
@@ -85,18 +74,5 @@ struct BalanceService: Content {
         }
 
         return simplified
-    }
-
-    static func getUserBasicInfo(_ req: Request, userID: UUID) async throws -> UserBasicInfo {
-        guard let user = try await User.find(userID, on: req.db) else {
-            throw Abort(.notFound, reason: "User not found")
-        }
-
-        return UserBasicInfo(
-            id: try user.requireID(),
-            displayName: user.displayName,
-            email: user.email,
-            avatarUrl: nil
-        )
     }
 }

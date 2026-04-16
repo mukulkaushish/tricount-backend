@@ -1,9 +1,13 @@
 import Fluent
 import Vapor
 
-struct ExpenseService: Content {
-    static func createExpense(_ req: Request, groupID: UUID, _ input: CreateExpenseRequest, actorID: UUID) async throws -> Expense {
-        try await GroupService.assertUserIsMember(req, groupID: groupID, userID: actorID)
+struct ExpenseService {
+    let req: Request
+
+    private var groups: GroupService { req.services.groups }
+
+    func create(groupID: UUID, _ input: CreateExpenseRequest, actorID: UUID) async throws -> Expense {
+        try await groups.assertUserIsMember(groupID: groupID, userID: actorID)
 
         let expense = Expense(
             groupID: groupID,
@@ -22,7 +26,7 @@ struct ExpenseService: Content {
         }
 
         for split in input.splits {
-            try await GroupService.assertUserIsMember(req, groupID: groupID, userID: split.userId)
+            try await groups.assertUserIsMember(groupID: groupID, userID: split.userId)
 
             let splitRecord = ExpenseSplit(
                 expenseID: try expense.requireID(),
@@ -50,23 +54,20 @@ struct ExpenseService: Content {
         )
         try await ledgerEntry.save(on: req.db)
 
-        try await GroupService.logActivity(req, groupID: groupID, actorID: actorID, type: "EXPENSE_CREATED", referenceId: try expense.requireID())
+        try await groups.logActivity(groupID: groupID, actorID: actorID, type: "EXPENSE_CREATED", referenceId: try expense.requireID())
 
         return expense
     }
 
-    static func getExpense(_ req: Request, expenseID: UUID) async throws -> Expense {
-        guard let expense = try await Expense.find(expenseID, on: req.db) else {
-            throw Abort(.notFound, reason: "Expense not found")
-        }
-        return expense
+    func get(expenseID: UUID) async throws -> Expense {
+        try await Expense.requireFind(expenseID, on: req.db, notFoundMessage: "Expense not found")
     }
 
-    static func updateExpense(_ req: Request, expenseID: UUID, _ input: UpdateExpenseRequest, actorID: UUID) async throws -> Expense {
-        let expense = try await getExpense(req, expenseID: expenseID)
+    func update(expenseID: UUID, _ input: UpdateExpenseRequest, actorID: UUID) async throws -> Expense {
+        let expense = try await get(expenseID: expenseID)
         let groupID = expense.$group.id
 
-        try await GroupService.assertUserIsMember(req, groupID: groupID, userID: actorID)
+        try await groups.assertUserIsMember(groupID: groupID, userID: actorID)
 
         expense.deletedAt = Date()
         try await expense.update(on: req.db)
@@ -88,7 +89,7 @@ struct ExpenseService: Content {
         }
 
         for split in splits {
-            try await GroupService.assertUserIsMember(req, groupID: groupID, userID: split.userId)
+            try await groups.assertUserIsMember(groupID: groupID, userID: split.userId)
 
             let splitRecord = ExpenseSplit(
                 expenseID: try newExpense.requireID(),
@@ -116,16 +117,16 @@ struct ExpenseService: Content {
         )
         try await ledgerEntry.save(on: req.db)
 
-        try await GroupService.logActivity(req, groupID: groupID, actorID: actorID, type: "EXPENSE_UPDATED", referenceId: try newExpense.requireID())
+        try await groups.logActivity(groupID: groupID, actorID: actorID, type: "EXPENSE_UPDATED", referenceId: try newExpense.requireID())
 
         return newExpense
     }
 
-    static func deleteExpense(_ req: Request, expenseID: UUID, actorID: UUID) async throws {
-        let expense = try await getExpense(req, expenseID: expenseID)
+    func delete(expenseID: UUID, actorID: UUID) async throws {
+        let expense = try await get(expenseID: expenseID)
         let groupID = expense.$group.id
 
-        try await GroupService.assertUserIsMember(req, groupID: groupID, userID: actorID)
+        try await groups.assertUserIsMember(groupID: groupID, userID: actorID)
 
         expense.deletedAt = Date()
         try await expense.update(on: req.db)
@@ -136,19 +137,19 @@ struct ExpenseService: Content {
             .filter(\.$referenceId == expenseID)
             .delete()
 
-        try await GroupService.logActivity(req, groupID: groupID, actorID: actorID, type: "EXPENSE_DELETED", referenceId: expenseID)
+        try await groups.logActivity(groupID: groupID, actorID: actorID, type: "EXPENSE_DELETED", referenceId: expenseID)
     }
 
-    static func listExpenses(_ req: Request, groupID: UUID) async throws -> [Expense] {
-        return try await Expense
+    func list(groupID: UUID) async throws -> [Expense] {
+        try await Expense
             .query(on: req.db)
             .filter(\.$group.$id == groupID)
             .filter(\.$deletedAt == nil)
             .all()
     }
 
-    static func getExpenseSplits(_ req: Request, expenseID: UUID) async throws -> [ExpenseSplit] {
-        return try await ExpenseSplit
+    func getSplits(expenseID: UUID) async throws -> [ExpenseSplit] {
+        try await ExpenseSplit
             .query(on: req.db)
             .filter(\.$expense.$id == expenseID)
             .all()

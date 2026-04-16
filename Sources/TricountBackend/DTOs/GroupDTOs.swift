@@ -145,3 +145,29 @@ struct UserBasicInfo: Content {
         case avatarUrl = "avatar_url"
     }
 }
+
+// MARK: - Model → DTO Helpers
+
+extension User {
+    func toBasicInfo() throws -> UserBasicInfo {
+        UserBasicInfo(
+            id: try requireID(),
+            displayName: displayName,
+            email: email,
+            avatarUrl: avatarUrl
+        )
+    }
+}
+
+extension GroupMember {
+    func toResponse(with user: User) throws -> GroupMemberResponse {
+        GroupMemberResponse(
+            id: try requireID(),
+            user: try user.toBasicInfo(),
+            role: role,
+            status: status,
+            joinedAt: joinedAt ?? Date(),
+            leftAt: leftAt
+        )
+    }
+}

@@ -1,8 +1,10 @@
 import Fluent
 import Vapor
 
-struct GroupService: Content {
-    static func createGroup(_ req: Request, _ input: CreateGroupRequest, createdByID: UUID) async throws -> Group {
+struct GroupService {
+    let req: Request
+
+    func create(_ input: CreateGroupRequest, createdByID: UUID) async throws -> Group {
         let group = Group(
             name: input.name,
             iconUrl: input.iconUrl,
@@ -17,22 +19,19 @@ struct GroupService: Content {
         )
         try await member.save(on: req.db)
 
-        try await logActivity(req, groupID: try group.requireID(), actorID: createdByID, type: "GROUP_CREATED", referenceId: try group.requireID())
+        try await logActivity(groupID: try group.requireID(), actorID: createdByID, type: "GROUP_CREATED", referenceId: try group.requireID())
 
         return group
     }
 
-    static func getGroup(_ req: Request, groupID: UUID) async throws -> Group {
-        guard let group = try await Group.find(groupID, on: req.db) else {
-            throw Abort(.notFound, reason: "Group not found")
-        }
-        return group
+    func get(groupID: UUID) async throws -> Group {
+        try await Group.requireFind(groupID, on: req.db, notFoundMessage: "Group not found")
     }
 
-    static func updateGroup(_ req: Request, groupID: UUID, _ input: UpdateGroupRequest, userID: UUID) async throws -> Group {
-        let group = try await getGroup(req, groupID: groupID)
+    func update(groupID: UUID, _ input: UpdateGroupRequest, userID: UUID) async throws -> Group {
+        let group = try await get(groupID: groupID)
 
-        try await assertUserIsAdmin(req, groupID: groupID, userID: userID)
+        try await assertUserIsAdmin(groupID: groupID, userID: userID)
 
         if let name = input.name { group.name = name }
         if let iconUrl = input.iconUrl { group.iconUrl = iconUrl }
@@ -41,12 +40,12 @@ struct GroupService: Content {
         if let delete = input.allowMemberDelete { group.allowMemberDelete = delete }
 
         try await group.update(on: req.db)
-        try await logActivity(req, groupID: groupID, actorID: userID, type: "GROUP_UPDATED", referenceId: groupID)
+        try await logActivity(groupID: groupID, actorID: userID, type: "GROUP_UPDATED", referenceId: groupID)
 
         return group
     }
 
-    static func listGroups(_ req: Request, userID: UUID) async throws -> [Group] {
+    func list(userID: UUID) async throws -> [Group] {
         let members = try await GroupMember
             .query(on: req.db)
             .filter(\.$user.$id == userID)
@@ -62,8 +61,8 @@ struct GroupService: Content {
             .all()
     }
 
-    static func addMember(_ req: Request, groupID: UUID, userID: UUID, role: String = "member", actorID: UUID) async throws -> GroupMember {
-        try await assertUserIsAdmin(req, groupID: groupID, userID: actorID)
+    func addMember(groupID: UUID, userID: UUID, role: String = "member", actorID: UUID) async throws -> GroupMember {
+        try await assertUserIsAdmin(groupID: groupID, userID: actorID)
 
         let newMember = GroupMember(
             groupID: groupID,
@@ -71,12 +70,12 @@ struct GroupService: Content {
             role: role
         )
         try await newMember.save(on: req.db)
-        try await logActivity(req, groupID: groupID, actorID: actorID, type: "MEMBER_ADDED", referenceId: userID)
+        try await logActivity(groupID: groupID, actorID: actorID, type: "MEMBER_ADDED", referenceId: userID)
 
         return newMember
     }
 
-    static func removeMember(_ req: Request, groupID: UUID, userID: UUID, actorID: UUID) async throws {
+    func getMember(groupID: UUID, userID: UUID) async throws -> GroupMember {
         guard let member = try await GroupMember
             .query(on: req.db)
             .filter(\.$group.$id == groupID)
@@ -84,43 +83,36 @@ struct GroupService: Content {
             .first() else {
             throw Abort(.notFound, reason: "Member not found")
         }
+        return member
+    }
 
-        try await assertUserIsAdmin(req, groupID: groupID, userID: actorID)
+    func removeMember(groupID: UUID, userID: UUID, actorID: UUID) async throws {
+        let member = try await getMember(groupID: groupID, userID: userID)
+
+        try await assertUserIsAdmin(groupID: groupID, userID: actorID)
 
         member.status = "removed"
         member.leftAt = Date()
         try await member.update(on: req.db)
-        try await logActivity(req, groupID: groupID, actorID: actorID, type: "MEMBER_REMOVED", referenceId: userID)
+        try await logActivity(groupID: groupID, actorID: actorID, type: "MEMBER_REMOVED", referenceId: userID)
     }
 
-    static func updateMemberRole(_ req: Request, groupID: UUID, userID: UUID, role: String, actorID: UUID) async throws -> GroupMember {
-        try await assertUserIsAdmin(req, groupID: groupID, userID: actorID)
+    func updateMemberRole(groupID: UUID, userID: UUID, role: String, actorID: UUID) async throws -> GroupMember {
+        try await assertUserIsAdmin(groupID: groupID, userID: actorID)
 
-        guard let member = try await GroupMember
-            .query(on: req.db)
-            .filter(\.$group.$id == groupID)
-            .filter(\.$user.$id == userID)
-            .first() else {
-            throw Abort(.notFound, reason: "Member not found")
-        }
+        let member = try await getMember(groupID: groupID, userID: userID)
 
         member.role = role
         try await member.update(on: req.db)
-        try await logActivity(req, groupID: groupID, actorID: actorID, type: "MEMBER_ROLE_UPDATED", referenceId: userID)
+        try await logActivity(groupID: groupID, actorID: actorID, type: "MEMBER_ROLE_UPDATED", referenceId: userID)
 
         return member
     }
 
-    static func leaveGroup(_ req: Request, groupID: UUID, userID: UUID) async throws {
-        guard let member = try await GroupMember
-            .query(on: req.db)
-            .filter(\.$group.$id == groupID)
-            .filter(\.$user.$id == userID)
-            .first() else {
-            throw Abort(.notFound, reason: "Member not found")
-        }
+    func leaveGroup(groupID: UUID, userID: UUID) async throws {
+        let member = try await getMember(groupID: groupID, userID: userID)
 
-        let balance = try await computeUserBalance(req, groupID: groupID, userID: userID)
+        let balance = try await computeUserBalance(groupID: groupID, userID: userID)
         guard balance == 0 else {
             throw Abort(.badRequest, reason: "Cannot leave group with non-zero balance")
         }
@@ -139,18 +131,26 @@ struct GroupService: Content {
         member.status = "left"
         member.leftAt = Date()
         try await member.update(on: req.db)
-        try await logActivity(req, groupID: groupID, actorID: userID, type: "MEMBER_LEFT", referenceId: userID)
+        try await logActivity(groupID: groupID, actorID: userID, type: "MEMBER_LEFT", referenceId: userID)
     }
 
-    static func getMembers(_ req: Request, groupID: UUID) async throws -> [GroupMember] {
-        return try await GroupMember
+    func getMembers(groupID: UUID) async throws -> [GroupMember] {
+        try await GroupMember
             .query(on: req.db)
             .filter(\.$group.$id == groupID)
             .filter(\.$status == "active")
             .all()
     }
 
-    static func assertUserIsMember(_ req: Request, groupID: UUID, userID: UUID) async throws {
+    func activeMemberCount(groupID: UUID) async throws -> Int {
+        try await GroupMember
+            .query(on: req.db)
+            .filter(\.$group.$id == groupID)
+            .filter(\.$status == "active")
+            .count()
+    }
+
+    func assertUserIsMember(groupID: UUID, userID: UUID) async throws {
         let member = try await GroupMember
             .query(on: req.db)
             .filter(\.$group.$id == groupID)
@@ -163,7 +163,7 @@ struct GroupService: Content {
         }
     }
 
-    static func assertUserIsAdmin(_ req: Request, groupID: UUID, userID: UUID) async throws {
+    func assertUserIsAdmin(groupID: UUID, userID: UUID) async throws {
         guard let member = try await GroupMember
             .query(on: req.db)
             .filter(\.$group.$id == groupID)
@@ -177,7 +177,7 @@ struct GroupService: Content {
         }
     }
 
-    static func logActivity(_ req: Request, groupID: UUID, actorID: UUID, type: String, referenceId: UUID? = nil, metadata: String? = nil) async throws {
+    func logActivity(groupID: UUID, actorID: UUID, type: String, referenceId: UUID? = nil, metadata: String? = nil) async throws {
         let activity = GroupActivity(
             groupID: groupID,
             actorID: actorID,
@@ -188,7 +188,7 @@ struct GroupService: Content {
         try await activity.save(on: req.db)
     }
 
-    static func computeUserBalance(_ req: Request, groupID: UUID, userID: UUID) async throws -> Int64 {
+    func computeUserBalance(groupID: UUID, userID: UUID) async throws -> Int64 {
         let entries = try await LedgerEntry
             .query(on: req.db)
             .filter(\.$group.$id == groupID)
