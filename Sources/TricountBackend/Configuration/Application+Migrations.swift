@@ -23,5 +23,20 @@ extension Application {
         migrations.add(CreateBackupCode())
         migrations.add(AddPerformanceIndexes())
         migrations.add(AddBackupCodeIndexes())
+
+        // Phase 1: Groups & Members
+        migrations.add(CreateGroupTables())
+
+        // Phase 2: Expenses & Splits
+        migrations.add(CreateExpenseTables())
+
+        // Phase 3: Ledger
+        migrations.add(CreateLedgerEntry())
+
+        // Phase 4: Payments & Payment Identity
+        migrations.add(CreatePaymentTables())
+
+        // Phase 5: Group Invites & Activity Logs
+        migrations.add(CreateGroupActivityTables())
     }
 }

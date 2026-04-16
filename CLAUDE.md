@@ -4,6 +4,8 @@
 
 - **Never** add `Co-Authored-By` or any Claude/AI attribution to git commit messages.
 - **Never** run `git commit` or `git push` directly. Only suggest the commit message — the user will commit and push manually.
+- **Never** use aggressive sed/awk replacements across multiple files without reviewing the changes. Always use targeted edits with the Edit tool instead to avoid syntax corruption. For bulk refactors, read files first, understand patterns, and use the Edit tool with specific old_string/new_string pairs.
+- **All migrations must wrap operations in database transactions** so that if any step fails, the entire migration reverts automatically. This prevents the database from being left in an inconsistent state where migrations are marked complete but tables/constraints don't actually exist.
 
 ---
 

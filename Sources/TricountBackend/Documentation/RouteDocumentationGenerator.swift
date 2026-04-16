@@ -286,7 +286,7 @@ struct RouteDocumentationGenerator {
 
     private func postmanSampleBody(for schema: DocumentationSchema) -> [String: Any] {
         switch schema {
-        case .object(let properties, _):
+        case .object(let properties, _, _):
             var body: [String: Any] = [:]
             for property in properties {
                 body[property.name] = postmanSampleValue(for: property.name, schema: property.schema)
@@ -325,7 +325,7 @@ struct RouteDocumentationGenerator {
         case .number: return 0.0
         case .boolean: return false
         case .array: return [] as [Any]
-        case .object(let properties, _):
+        case .object(let properties, _, _):
             var nested: [String: Any] = [:]
             for property in properties {
                 nested[property.name] = postmanSampleValue(for: property.name, schema: property.schema)
@@ -630,7 +630,8 @@ struct RouteDocumentationGenerator {
             html += "  <div class=\"nav-group\">\n"
             html += "    <div class=\"nav-group-title\">\(escapeHTML(group.title))</div>\n"
             for section in sections {
-                if sections.count > 1 || section.isExplicit {
+                let showSectionHeader = section.slug != "general" && (sections.count > 1 || section.isExplicit)
+                if showSectionHeader {
                     html += "    <div class=\"nav-section-title\">\(escapeHTML(section.title))</div>\n"
                 }
                 for route in section.routes {
@@ -702,6 +703,7 @@ struct RouteDocumentationGenerator {
             detail: "\(snapshot.routeCount) routes",
             href: "/docs/Tricount-Backend.postman_collection.json"
         )
+        html += "\n"
         html += "  </div>\n"
         html += "</div>\n"
 
@@ -718,6 +720,7 @@ struct RouteDocumentationGenerator {
                     detail: "\(artifact.routeCount) routes",
                     href: "/docs/\(artifact.fileName)"
                 )
+                html += "\n"
             }
             html += "  </div>\n"
             html += "</div>\n"
@@ -751,14 +754,15 @@ struct RouteDocumentationGenerator {
             html += "  <h2>\(escapeHTML(group.title))</h2>\n"
             let sections = routeSections(from: group.routes, within: group)
             for section in sections {
-                if sections.count > 1 || section.isExplicit {
+                let showSectionHeader = section.slug != "general" && (sections.count > 1 || section.isExplicit)
+                if showSectionHeader {
                     html += "  <div class=\"endpoint-subsection\">\n"
                     html += "    <h3>\(escapeHTML(section.title))</h3>\n"
                 }
                 for route in section.routes {
                     html += renderRouteCard(route)
                 }
-                if sections.count > 1 || section.isExplicit {
+                if showSectionHeader {
                     html += "  </div>\n"
                 }
             }
@@ -1047,16 +1051,28 @@ struct RouteDocumentationGenerator {
             .map(String.init)
         let remainingSegments = Array(fullSegments.dropFirst(groupSegments.count))
 
-        guard let first = remainingSegments.first else {
-            return "general"
+        // Find the first path parameter (e.g. :id) and use what comes after it as the section.
+        // Routes with no parameter, or that end at the parameter (/:id), go into "general"
+        // so they render at the top of the group without any section header.
+        if let paramIndex = remainingSegments.firstIndex(where: { $0.hasPrefix(":") }) {
+            let afterParam = remainingSegments.dropFirst(paramIndex + 1)
+            if let firstResource = afterParam.first(where: { !$0.hasPrefix(":") }) {
+                return firstResource
+            }
         }
 
-        return remainingSegments.count == 1 ? "general" : first
+        return "general"
     }
 
     private func makeSchemas(from routes: [RouteDocumentationEntry]) -> [String: DocumentationSchema] {
         routes
             .flatMap(\.schemas)
+            // Drop schemas whose names still contain a dot — these are internal framework types
+            // (e.g. "NIOHTTP1.HTTPResponseStatus") that weren't stripped by prettyDocumentationTypeName.
+            // Also drop schemas backed by an unresolved .unknown — they have no useful field info.
+            .filter { entry in
+                isPublicDocumentationType(entry.name) && !entry.schema.isUnknown
+            }
             .reduce(into: [String: DocumentationSchema]()) { schemas, entry in
                 schemas[entry.name] = schemas[entry.name] ?? entry.schema
             }
@@ -1079,13 +1095,16 @@ struct RouteDocumentationGenerator {
             }
 
             return sections.map { section in
-                CollectionArtifact(
-                    title: "\(group.title) - \(section.title)",
+                // "general" = base group routes (no sub-resource). Label the card
+                // with the group name so "General" never appears as a visible title.
+                let cardTitle = section.slug == "general" ? group.title : section.title
+                return CollectionArtifact(
+                    title: "\(group.title) - \(cardTitle)",
                     fileName: section.postmanFileName(in: group),
                     routeCount: section.routes.count,
                     routes: section.routes,
                     groupSlug: group.slug,
-                    sectionTitle: section.title
+                    sectionTitle: cardTitle
                 )
             }
         }
@@ -1528,6 +1547,9 @@ struct RouteDocumentationGenerator {
                 return itemFields
             }
             return [DocumentationFieldRow(path: "item", type: items.markdownType, required: true)]
+        case .unknown:
+            // No structural info available — let the caller show "No structured fields documented."
+            return []
         default:
             return [DocumentationFieldRow(path: "value", type: schema.markdownType, required: true)]
         }
@@ -1747,6 +1769,10 @@ private struct RouteSection {
 
     func postmanFileName(in group: RouteGroup) -> String {
         let groupSuffix = documentationFileNameSegment(group.slug)
+        // "general" = base group routes, no sub-resource label needed in the filename
+        if slug == "general" {
+            return "Tricount-Backend.\(groupSuffix).postman_collection.json"
+        }
         let sectionSuffix = documentationFileNameSegment(slug)
         return "Tricount-Backend.\(groupSuffix)-\(sectionSuffix).postman_collection.json"
     }

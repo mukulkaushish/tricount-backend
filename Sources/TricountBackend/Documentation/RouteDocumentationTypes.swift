@@ -99,7 +99,7 @@ indirect enum DocumentationSchema: Sendable {
     case boolean(nullable: Bool = false)
     case array(items: DocumentationSchema, nullable: Bool = false)
     case dictionary(values: DocumentationSchema, nullable: Bool = false)
-    case object(properties: [DocumentationProperty], nullable: Bool = false)
+    case object(properties: [DocumentationProperty], typeName: String? = nil, nullable: Bool = false)
     case unknown(typeName: String, nullable: Bool = false)
 
     func nullable() -> DocumentationSchema {
@@ -116,11 +116,17 @@ indirect enum DocumentationSchema: Sendable {
             return .array(items: items, nullable: true)
         case .dictionary(let values, _):
             return .dictionary(values: values, nullable: true)
-        case .object(let properties, _):
-            return .object(properties: properties, nullable: true)
+        case .object(let properties, let typeName, _):
+            return .object(properties: properties, typeName: typeName, nullable: true)
         case .unknown(let typeName, _):
             return .unknown(typeName: typeName, nullable: true)
         }
+    }
+
+    /// True when this schema carries no structural info — only a raw type name.
+    var isUnknown: Bool {
+        if case .unknown = self { return true }
+        return false
     }
 
     var markdownType: String {
@@ -140,8 +146,9 @@ indirect enum DocumentationSchema: Sendable {
         case .dictionary(let values, let nullable):
             let base = "object<string, \(values.markdownType)>"
             return nullable ? "\(base)?" : base
-        case .object(_, let nullable):
-            return nullable ? "object?" : "object"
+        case .object(_, let typeName, let nullable):
+            let base = typeName ?? "object"
+            return nullable ? "\(base)?" : base
         case .unknown(let typeName, let nullable):
             return nullable ? "\(typeName)?" : typeName
         }
@@ -182,7 +189,7 @@ indirect enum DocumentationSchema: Sendable {
                 object["nullable"] = true
             }
             return object
-        case .object(let properties, let nullable):
+        case .object(let properties, _, let nullable):
             var object: [String: Any] = [
                 "type": "object",
                 "properties": Dictionary(uniqueKeysWithValues: properties.map { ($0.name, $0.schema.jsonObject) })
@@ -213,7 +220,7 @@ indirect enum DocumentationSchema: Sendable {
 
     func flattenedFields(prefix: String = "", requiredByParent: Bool = true) -> [DocumentationFieldRow] {
         switch self {
-        case .object(let properties, _):
+        case .object(let properties, _, _):
             return properties.flatMap { property in
                 let path = prefix.isEmpty ? property.name : "\(prefix).\(property.name)"
                 var rows = [
@@ -240,7 +247,7 @@ indirect enum DocumentationSchema: Sendable {
 
     private func flattenedNestedFields(prefix: String, requiredByParent: Bool) -> [DocumentationFieldRow] {
         switch self {
-        case .object(let properties, _):
+        case .object(let properties, _, _):
             return properties.flatMap { property in
                 let path = "\(prefix).\(property.name)"
                 var rows = [
@@ -299,10 +306,18 @@ enum DocumentationSchemaFactory {
 
 func prettyDocumentationTypeName(_ type: Any.Type) -> String {
     var name = String(reflecting: type)
-    for prefix in ["TricountBackend.", "Swift.", "Vapor."] {
+    // Strip known module prefixes so names like "NIOHTTP1.HTTPResponseStatus"
+    // or "TricountBackend.LoginRequest" become just "HTTPResponseStatus" / "LoginRequest".
+    for prefix in ["TricountBackend.", "Swift.", "Vapor.", "NIOHTTP1.", "NIOCore.", "NIO.", "NIOSSL.", "AsyncHTTPClient."] {
         name = name.replacingOccurrences(of: prefix, with: "")
     }
     return name
+}
+
+/// Returns true if the type name looks like a public, user-facing DTO name
+/// (no remaining dots means all module prefixes were stripped successfully).
+func isPublicDocumentationType(_ name: String) -> Bool {
+    !name.contains(".")
 }
 
 final class DocumentationSchemaRegistry {
@@ -369,7 +384,7 @@ final class DocumentationSchemaRegistry {
                             required: false
                         )
                     }
-                    schema = .object(properties: properties.sorted { $0.name < $1.name })
+                    schema = .object(properties: properties.sorted { $0.name < $1.name }, typeName: prettyDocumentationTypeName(T.self))
                 } catch {
                     schema = .unknown(typeName: prettyDocumentationTypeName(type))
                 }
@@ -498,7 +513,7 @@ struct DocumentationKeyedDecodingContainer<Key: CodingKey>: KeyedDecodingContain
         decoder.properties.append(
             DocumentationProperty(
                 name: key.stringValue,
-                schema: .object(properties: nested.properties),
+                schema: .object(properties: nested.properties, typeName: nil),
                 required: true
             )
         )
