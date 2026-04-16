@@ -9,7 +9,8 @@ extension Application {
         middleware.use(RateLimitMiddleware())
 
         // Serves the generated API reference (index.html + openapi.json) at the web root.
-        middleware.use(FileMiddleware(publicDirectory: directory.publicDirectory))
+        // `defaultFile: "index.html"` ensures GET / returns Scalar UI instead of a 404.
+        middleware.use(FileMiddleware(publicDirectory: directory.publicDirectory, defaultFile: "index.html"))
 
         // Converts errors to { "error": ..., "message": ..., "statusCode": ... }
         middleware.use(TricountErrorMiddleware())

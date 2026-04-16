@@ -8,9 +8,8 @@ public func configure(_ app: Application) async throws {
     app.configureMigrations()
 
     try routes(app)
-    if app.runtimeConfiguration.startup.generateRouteDocumentationOnBoot {
-        try app.generateRouteDocumentation()
-    }
+    // Always generate the API reference so GET / serves a live Scalar UI regardless of environment.
+    try app.generateRouteDocumentation()
     if app.runtimeConfiguration.startup.autoMigrateOnBoot {
         try await app.autoMigrate()
     }
