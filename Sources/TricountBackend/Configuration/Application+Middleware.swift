@@ -8,7 +8,7 @@ extension Application {
         middleware.use(LoggingMiddleware())
         middleware.use(RateLimitMiddleware())
 
-        // Serves static files from the Public/ directory
+        // Serves the generated API reference (index.html + openapi.json) at the web root.
         middleware.use(FileMiddleware(publicDirectory: directory.publicDirectory))
 
         // Converts errors to { "error": ..., "message": ..., "statusCode": ... }

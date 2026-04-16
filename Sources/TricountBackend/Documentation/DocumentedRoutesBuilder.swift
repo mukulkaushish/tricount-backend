@@ -22,6 +22,22 @@ extension Route {
         )
         return self
     }
+
+    @discardableResult
+    func documented(
+        auth: RouteDocumentationAuth = .none,
+        section: RouteDocumentationSection? = nil,
+        response: RouteDocumentationResponse,
+        requestBody: RouteDocumentationRequestBody? = nil
+    ) -> Route {
+        routeDocumentationMetadata = RouteDocumentationMetadata(
+            auth: auth,
+            section: section,
+            requestBody: requestBody,
+            successResponse: response
+        )
+        return self
+    }
 }
 
 extension RoutesBuilder {

@@ -16,10 +16,10 @@ final class GroupActivity: Model, @unchecked Sendable {
     @Field(key: "type")
     var type: String
 
-    @Field(key: "reference_id")
+    @OptionalField(key: "reference_id")
     var referenceId: UUID?
 
-    @Field(key: "metadata")
+    @OptionalField(key: "metadata")
     var metadata: String?
 
     @Timestamp(key: "created_at", on: .create)

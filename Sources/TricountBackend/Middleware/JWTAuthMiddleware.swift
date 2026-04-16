@@ -45,6 +45,7 @@ enum AuthError: AbortError {
     case passkeyAuthenticationInvalid
     case passkeyCredentialAlreadyExists
     case passkeyCredentialNotFound
+    case emailNotVerified
 
     var status: HTTPStatus {
         switch self {
@@ -62,6 +63,8 @@ enum AuthError: AbortError {
             return .conflict
         case .appleEmailMissing, .mfaRequiresVerifiedEmail:
             return .unprocessableEntity
+        case .emailNotVerified:
+            return .forbidden
         }
     }
 
@@ -106,6 +109,8 @@ enum AuthError: AbortError {
             return "Passkey is already linked to an account"
         case .passkeyCredentialNotFound:
             return "Passkey credential not found"
+        case .emailNotVerified:
+            return "Email verification required before performing this action"
         }
     }
 
@@ -136,6 +141,7 @@ enum AuthError: AbortError {
         case .passkeyAuthenticationInvalid: return "PASSKEY_AUTHENTICATION_INVALID"
         case .passkeyCredentialAlreadyExists: return "PASSKEY_CREDENTIAL_ALREADY_EXISTS"
         case .passkeyCredentialNotFound: return "PASSKEY_CREDENTIAL_NOT_FOUND"
+        case .emailNotVerified: return "EMAIL_NOT_VERIFIED"
         }
     }
 }

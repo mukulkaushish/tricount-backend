@@ -39,7 +39,7 @@ final class Group: Model, @unchecked Sendable {
 
     init() {}
 
-    init(id: UUID? = nil, name: String, iconUrl: String? = nil, createdByID: UUID, simplifyDebtsEnabled: Bool = true, allowMemberEdit: Bool = true, allowMemberDelete: Bool = true) {
+    init(id: UUID? = nil, name: String, iconUrl: String? = nil, createdByID: UUID, simplifyDebtsEnabled: Bool = false, allowMemberEdit: Bool = false, allowMemberDelete: Bool = false) {
         self.id = id
         self.name = name
         self.iconUrl = iconUrl

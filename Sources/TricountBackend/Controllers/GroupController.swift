@@ -3,26 +3,44 @@ import Fluent
 
 struct GroupController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
-        let auth = routes.grouped("groups").grouped(JWTAuthMiddleware())
+        let auth = routes
+            .grouped("groups")
+            .grouped(JWTAuthMiddleware())
+            .grouped(VerifiedUserMiddleware())
+            .grouped(IdempotencyMiddleware())
 
         // No group context needed
         auth.post(use: createGroup)
+            .documented(auth: .bearer, response: .raw(CreateGroupResponse.self, status: .created), requestBody: .json(CreateGroupRequest.self))
         auth.get(use: listGroups)
+            .documented(auth: .bearer, response: .raw(ListGroupsResponse.self))
 
         // Group-scoped: membership validated by middleware
         let scoped = auth.grouped(":id").grouped(GroupMemberMiddleware())
         scoped.get(use: getGroup)
+            .documented(auth: .bearer, response: .raw(GroupDetailsResponse.self))
         scoped.put(use: updateGroup)
+            .documented(auth: .bearer, response: .raw(GroupDetailsResponse.self), requestBody: .json(UpdateGroupRequest.self))
+        scoped.delete(use: deleteGroup)
+            .documented(auth: .bearer, response: .empty())
 
         scoped.post("members", use: addMember)
+            .documented(auth: .bearer, response: .raw(AddMemberResponse.self, status: .created), requestBody: .json(AddMemberRequest.self))
         scoped.get("members", use: getMembers)
+            .documented(auth: .bearer, response: .raw(ListMembersResponse.self))
         scoped.delete("members", ":userId", use: removeMember)
+            .documented(auth: .bearer, response: .empty())
         scoped.put("members", ":userId", "role", use: updateMemberRole)
+            .documented(auth: .bearer, response: .raw(GroupMemberResponse.self), requestBody: .json(UpdateMemberRequest.self))
         scoped.post("leave", use: leaveGroup)
+            .documented(auth: .bearer, response: .empty())
 
         scoped.get("activities", use: listActivities)
+            .documented(auth: .bearer, response: .raw(ListActivityLogsResponse.self))
         scoped.get("balance", use: getGroupBalance)
+            .documented(auth: .bearer, response: .raw(GroupBalanceResponse.self))
         scoped.get("balance", "simplified", use: getSimplifiedDebts)
+            .documented(auth: .bearer, response: .raw(SimplifyDebtsResponse.self))
     }
 
     // MARK: - Group CRUD
@@ -32,18 +50,20 @@ struct GroupController: RouteCollection {
         let input = try req.content.decode(CreateGroupRequest.self)
 
         let group = try await req.services.groups.create(input, createdByID: userID)
+        let groupID = try group.requireID()
         let response = CreateGroupResponse(
-            id: try group.requireID(),
+            id: groupID,
             name: group.name,
             iconUrl: group.iconUrl,
             createdBy: userID,
             simplifyDebtsEnabled: group.simplifyDebtsEnabled,
             allowMemberEdit: group.allowMemberEdit,
             allowMemberDelete: group.allowMemberDelete,
+            memberCount: try await req.services.groups.activeMemberCount(groupID: groupID),
             createdAt: group.createdAt ?? Date()
         )
 
-        var httpResponse = Response(status: .created)
+        let httpResponse = Response(status: .created)
         try httpResponse.content.encode(response)
         return httpResponse
     }
@@ -53,17 +73,18 @@ struct GroupController: RouteCollection {
         let svc = req.services.groups
 
         let groups = try await svc.list(userID: userID)
-        var responses: [GroupListResponse] = []
+        let groupIDs = try groups.map { try $0.requireID() }
+        let counts = try await svc.activeMemberCounts(groupIDs: groupIDs)
 
-        for group in groups {
-            let groupID = try group.requireID()
-            responses.append(GroupListResponse(
-                id: groupID,
+        let responses = try groups.map { group -> GroupListResponse in
+            let id = try group.requireID()
+            return GroupListResponse(
+                id: id,
                 name: group.name,
                 iconUrl: group.iconUrl,
-                memberCount: try await svc.activeMemberCount(groupID: groupID),
+                memberCount: counts[id] ?? 0,
                 createdAt: group.createdAt ?? Date()
-            ))
+            )
         }
 
         return ListGroupsResponse(groups: responses, total: responses.count)
@@ -82,26 +103,38 @@ struct GroupController: RouteCollection {
         return try await buildDetailsResponse(req, group: group)
     }
 
+    func deleteGroup(req: Request) async throws -> HTTPStatus {
+        let ctx = try req.groupContext
+        try await req.services.groups.delete(groupID: ctx.groupID, actorID: ctx.userID)
+        return .noContent
+    }
+
     // MARK: - Members
 
-    func addMember(req: Request) async throws -> GroupMemberResponse {
+    func addMember(req: Request) async throws -> AddMemberResponse {
         let ctx = try req.groupContext
         let input = try req.content.decode(AddMemberRequest.self)
-        let member = try await req.services.groups.addMember(groupID: ctx.groupID, userID: input.userId, role: input.role ?? "member", actorID: ctx.userID)
-        let user = try await User.requireFind(input.userId, on: req.db)
-        return try member.toResponse(with: user)
+        let (member, user, invite) = try await req.services.groups.addMember(
+            groupID: ctx.groupID,
+            email: input.email,
+            name: input.name,
+            actorID: ctx.userID
+        )
+
+        req.setDevelopmentDebugHeader(name: "X-Debug-Invite-Token", value: invite.inviteToken)
+
+        let requiresVerification = !user.isEmailVerified
+        return AddMemberResponse(
+            member: try member.toResponse(with: user),
+            requiresVerification: requiresVerification,
+            inviteToken: requiresVerification ? invite.inviteToken : nil
+        )
     }
 
     func getMembers(req: Request) async throws -> ListMembersResponse {
         let ctx = try req.groupContext
         let members = try await req.services.groups.getMembers(groupID: ctx.groupID)
-
-        var responses: [GroupMemberResponse] = []
-        for member in members {
-            let user = try await User.requireFind(member.$user.id, on: req.db)
-            try responses.append(member.toResponse(with: user))
-        }
-
+        let responses = try members.map { try $0.toResponse(with: $0.user) }
         return ListMembersResponse(members: responses, total: responses.count)
     }
 
@@ -141,19 +174,18 @@ struct GroupController: RouteCollection {
             .query(on: req.db)
             .filter(\.$group.$id == ctx.groupID)
             .sort(\.$createdAt, .descending)
+            .with(\.$actor)
             .all()
 
-        var responses: [ActivityLogResponse] = []
-        for activity in activities {
-            let actor = try await User.requireFind(activity.$actor.id, on: req.db)
-            responses.append(ActivityLogResponse(
+        let responses = try activities.map { activity in
+            ActivityLogResponse(
                 id: try activity.requireID(),
-                actor: try actor.toBasicInfo(),
+                actor: try activity.actor.toBasicInfo(),
                 type: activity.type,
                 referenceId: activity.referenceId,
                 metadata: activity.metadata,
                 createdAt: activity.createdAt ?? Date()
-            ))
+            )
         }
 
         return ListActivityLogsResponse(activities: responses, total: responses.count)

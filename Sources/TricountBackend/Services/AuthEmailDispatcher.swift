@@ -5,6 +5,7 @@ protocol AuthEmailDispatching: Sendable {
     func sendPasswordResetOTP(to email: String, code: String, displayName: String) async throws
     func sendMFALoginOTP(to email: String, code: String, displayName: String) async throws
     func sendMFAEnableOTP(to email: String, code: String, displayName: String) async throws
+    func sendGroupInvitation(to email: String, inviteeName: String, groupName: String, inviterName: String, inviteToken: String) async throws
 }
 
 struct LoggingAuthEmailDispatcher: AuthEmailDispatching {
@@ -25,6 +26,20 @@ struct LoggingAuthEmailDispatcher: AuthEmailDispatching {
 
     func sendMFAEnableOTP(to email: String, code: String, displayName: String) async throws {
         log(codeType: "MFA enable OTP generated", email: email, code: code, displayName: displayName)
+    }
+
+    func sendGroupInvitation(to email: String, inviteeName: String, groupName: String, inviterName: String, inviteToken: String) async throws {
+        guard environment == .development else { return }
+        logger.info(
+            "Group invitation dispatched",
+            metadata: [
+                "email": .string(email),
+                "inviteeName": .string(inviteeName),
+                "groupName": .string(groupName),
+                "inviterName": .string(inviterName),
+                "inviteToken": .string(inviteToken)
+            ]
+        )
     }
 
     private func log(codeType: String, email: String, code: String, displayName: String) {

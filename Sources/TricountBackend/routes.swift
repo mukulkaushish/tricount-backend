@@ -1,14 +1,6 @@
 import Vapor
 
 func routes(_ app: Application) throws {
-    app.get { _ in
-        Response(status: .seeOther, headers: ["Location": "/docs/index.html"])
-    }
-
-    app.get("health") { _ async in
-        HealthCheckResponse(status: "ok", service: "tricount-backend")
-    }
-
     let v1 = app.grouped("v1")
 
     // Auth endpoints
@@ -28,4 +20,7 @@ func routes(_ app: Application) throws {
 
     // Invites
     try v1.register(collection: InviteController())
+
+    // User lookups
+    try v1.register(collection: UserController())
 }

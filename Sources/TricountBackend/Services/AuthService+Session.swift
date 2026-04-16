@@ -45,17 +45,26 @@ extension AuthService {
             throw Abort(.unprocessableEntity, reason: "Invalid email format")
         }
 
-        let exists = try await User.query(on: req.db)
-            .filter(\.$email == email)
-            .count() > 0
-
-        if exists { throw AuthError.emailAlreadyExists }
-
         let hash = try await req.passwordHasher.hash(dto.password, on: req.eventLoop)
+        let displayName = dto.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let existing = try await User.query(on: req.db)
+            .filter(\.$email == email)
+            .first() {
+            guard existing.provider == "placeholder" else {
+                throw AuthError.emailAlreadyExists
+            }
+            existing.passwordHash = hash
+            existing.displayName = displayName
+            existing.provider = "email"
+            try await existing.save(on: req.db)
+            return try await generateTokenPair(for: existing)
+        }
+
         let user = User(
             email: email,
             passwordHash: hash,
-            displayName: dto.displayName.trimmingCharacters(in: .whitespacesAndNewlines),
+            displayName: displayName,
             isEmailVerified: false,
             provider: "email"
         )
@@ -259,6 +268,14 @@ extension AuthService {
 
         if user.avatarUrl == nil {
             user.avatarUrl = profile.avatarUrl
+        }
+
+        // Placeholder users (added to a group before signing up) adopt the social provider on first sign-in.
+        if user.provider == "placeholder" {
+            user.provider = profile.provider.rawValue
+            if user.displayName.isEmpty {
+                user.displayName = profile.displayName
+            }
         }
 
         if user.provider == profile.provider.rawValue, profile.canRefreshPrimaryProfile {

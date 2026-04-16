@@ -22,7 +22,7 @@ final class GroupMember: Model, @unchecked Sendable {
     @Timestamp(key: "joined_at", on: .create)
     var joinedAt: Date?
 
-    @Field(key: "left_at")
+    @OptionalField(key: "left_at")
     var leftAt: Date?
 
     init() {}

@@ -71,6 +71,12 @@ struct ExpiredRecordCleanupService: Sendable {
                     .group(.or) { $0.filter(\.$expiresAt < cutoff); $0.filter(\.$isRevoked == true) }
                     .delete()
             }}
+            group.addTask { await purge("SyncOperation", logger: logger) {
+                // No grace period — once a sync op expires, it's safe to drop. Client idempotency window already elapsed.
+                try await SyncOperation.query(on: db)
+                    .filter(\.$expiresAt < Date())
+                    .delete()
+            }}
         }
 
         logger.info("Cleanup completed")

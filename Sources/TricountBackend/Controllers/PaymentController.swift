@@ -6,13 +6,19 @@ struct PaymentController: RouteCollection {
         let payments = routes
             .grouped("groups", ":id")
             .grouped(JWTAuthMiddleware())
+            .grouped(VerifiedUserMiddleware())
             .grouped(GroupMemberMiddleware())
+            .grouped(IdempotencyMiddleware())
             .grouped("payments")
 
         payments.post(use: createPayment)
+            .documented(auth: .bearer, response: .raw(CreatePaymentResponse.self, status: .created), requestBody: .json(CreatePaymentRequest.self))
         payments.get(use: listPayments)
+            .documented(auth: .bearer, response: .raw(ListPaymentsResponse.self))
         payments.get(":paymentId", use: getPayment)
+            .documented(auth: .bearer, response: .raw(PaymentDetailsResponse.self))
         payments.post(":paymentId", "reverse", use: reversePayment)
+            .documented(auth: .bearer, response: .raw(PaymentDetailsResponse.self))
     }
 
     func createPayment(req: Request) async throws -> Response {
@@ -21,8 +27,9 @@ struct PaymentController: RouteCollection {
         let input = try req.content.decode(CreatePaymentRequest.self)
         let payment = try await req.services.payments.create(groupID: ctx.groupID, input, actorID: ctx.userID)
 
-        let payer = try await User.requireFind(payment.$payer.id, on: req.db)
-        let receiver = try await User.requireFind(payment.$receiver.id, on: req.db)
+        async let payerQuery = User.requireFind(payment.$payer.id, on: req.db)
+        async let receiverQuery = User.requireFind(payment.$receiver.id, on: req.db)
+        let (payer, receiver) = try await (payerQuery, receiverQuery)
 
         let response = CreatePaymentResponse(
             id: try payment.requireID(),
@@ -33,7 +40,7 @@ struct PaymentController: RouteCollection {
             createdAt: payment.createdAt ?? Date()
         )
 
-        var httpResponse = Response(status: .created)
+        let httpResponse = Response(status: .created)
         try httpResponse.content.encode(response)
         return httpResponse
     }
@@ -42,19 +49,14 @@ struct PaymentController: RouteCollection {
         let ctx = try req.groupContext
 
         let payments = try await req.services.payments.list(groupID: ctx.groupID)
-        var responses: [PaymentListResponse] = []
-
-        for payment in payments {
-            let payer = try await User.requireFind(payment.$payer.id, on: req.db)
-            let receiver = try await User.requireFind(payment.$receiver.id, on: req.db)
-
-            responses.append(PaymentListResponse(
+        let responses = try payments.map { payment in
+            PaymentListResponse(
                 id: try payment.requireID(),
-                payer: try payer.toBasicInfo(),
-                receiver: try receiver.toBasicInfo(),
+                payer: try payment.payer.toBasicInfo(),
+                receiver: try payment.receiver.toBasicInfo(),
                 amount: payment.amount,
                 createdAt: payment.createdAt ?? Date()
-            ))
+            )
         }
 
         return ListPaymentsResponse(payments: responses, total: responses.count)
@@ -77,8 +79,9 @@ struct PaymentController: RouteCollection {
     // MARK: - Private Helpers
 
     private func buildDetailsResponse(_ req: Request, payment: Payment, groupID: UUID) async throws -> PaymentDetailsResponse {
-        let payer = try await User.requireFind(payment.$payer.id, on: req.db)
-        let receiver = try await User.requireFind(payment.$receiver.id, on: req.db)
+        async let payerQuery = User.requireFind(payment.$payer.id, on: req.db)
+        async let receiverQuery = User.requireFind(payment.$receiver.id, on: req.db)
+        let (payer, receiver) = try await (payerQuery, receiverQuery)
 
         return PaymentDetailsResponse(
             id: try payment.requireID(),

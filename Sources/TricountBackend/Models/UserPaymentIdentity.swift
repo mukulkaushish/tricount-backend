@@ -7,10 +7,10 @@ final class UserPaymentIdentity: Model, @unchecked Sendable {
     @ID(custom: "user_id")
     var id: UUID?
 
-    @Field(key: "upi_id")
+    @OptionalField(key: "upi_id")
     var upiId: String?
 
-    @Field(key: "qr_url")
+    @OptionalField(key: "qr_url")
     var qrUrl: String?
 
     @Timestamp(key: "updated_at", on: .update)

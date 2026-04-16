@@ -176,11 +176,6 @@ struct MessageResponse: Content {
     let message: String
 }
 
-struct HealthCheckResponse: Content {
-    let status: String
-    let service: String
-}
-
 // MARK: - Error Response
 
 struct ErrorResponse: Content {

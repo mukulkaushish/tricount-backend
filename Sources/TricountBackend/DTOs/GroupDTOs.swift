@@ -19,6 +19,7 @@ struct CreateGroupResponse: Content {
     let simplifyDebtsEnabled: Bool
     let allowMemberEdit: Bool
     let allowMemberDelete: Bool
+    let memberCount: Int
     let createdAt: Date
 
     enum CodingKeys: String, CodingKey {
@@ -28,6 +29,7 @@ struct CreateGroupResponse: Content {
         case simplifyDebtsEnabled = "simplify_debts_enabled"
         case allowMemberEdit = "allow_member_edit"
         case allowMemberDelete = "allow_member_delete"
+        case memberCount = "member_count"
         case createdAt = "created_at"
     }
 }
@@ -98,12 +100,21 @@ struct ListGroupsResponse: Content {
 
 // MARK: - Member Management
 struct AddMemberRequest: Content {
-    let userId: UUID
-    let role: String?
+    let email: String
+    /// Required only when the email does not match an existing user. Used as displayName for the placeholder account.
+    let name: String?
+}
+
+struct AddMemberResponse: Content {
+    let member: GroupMemberResponse
+    /// True when the added user has not verified their email yet. Admin should share `inviteToken` so the user can claim/verify.
+    let requiresVerification: Bool
+    let inviteToken: String?
 
     enum CodingKeys: String, CodingKey {
-        case userId = "user_id"
-        case role
+        case member
+        case requiresVerification = "requires_verification"
+        case inviteToken = "invite_token"
     }
 }
 
@@ -112,11 +123,17 @@ struct GroupMemberResponse: Content {
     let user: UserBasicInfo
     let role: String
     let status: String
+    /// Mirror of `user.isEmailVerified`, surfaced here so clients don't need a second lookup to render a "pending" badge.
+    let isVerified: Bool
+    /// True when the user was created via admin invite and has not claimed the account yet (`provider == "placeholder"`).
+    let isPlaceholder: Bool
     let joinedAt: Date
     let leftAt: Date?
 
     enum CodingKeys: String, CodingKey {
         case id, user, role, status
+        case isVerified = "is_verified"
+        case isPlaceholder = "is_placeholder"
         case joinedAt = "joined_at"
         case leftAt = "left_at"
     }
@@ -166,6 +183,8 @@ extension GroupMember {
             user: try user.toBasicInfo(),
             role: role,
             status: status,
+            isVerified: user.isEmailVerified,
+            isPlaceholder: user.provider == "placeholder",
             joinedAt: joinedAt ?? Date(),
             leftAt: leftAt
         )

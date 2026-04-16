@@ -6,14 +6,21 @@ struct ExpenseController: RouteCollection {
         let expenses = routes
             .grouped("groups", ":id")
             .grouped(JWTAuthMiddleware())
+            .grouped(VerifiedUserMiddleware())
             .grouped(GroupMemberMiddleware())
+            .grouped(IdempotencyMiddleware())
             .grouped("expenses")
 
         expenses.post(use: createExpense)
+            .documented(auth: .bearer, response: .raw(CreateExpenseResponse.self, status: .created), requestBody: .json(CreateExpenseRequest.self))
         expenses.get(use: listExpenses)
+            .documented(auth: .bearer, response: .raw(ListExpensesResponse.self))
         expenses.get(":expenseId", use: getExpense)
+            .documented(auth: .bearer, response: .raw(ExpenseDetailsResponse.self))
         expenses.put(":expenseId", use: updateExpense)
+            .documented(auth: .bearer, response: .raw(ExpenseDetailsResponse.self), requestBody: .json(UpdateExpenseRequest.self))
         expenses.delete(":expenseId", use: deleteExpense)
+            .documented(auth: .bearer, response: .empty())
     }
 
     func createExpense(req: Request) async throws -> Response {
@@ -22,8 +29,9 @@ struct ExpenseController: RouteCollection {
         let input = try req.content.decode(CreateExpenseRequest.self)
         let expense = try await req.services.expenses.create(groupID: ctx.groupID, input, actorID: ctx.userID)
 
-        let splitResponses = try await buildSplitResponses(req, expenseID: try expense.requireID())
-        let paidByUser = try await User.requireFind(expense.$paidBy.id, on: req.db, notFoundMessage: "Payer not found")
+        async let splitsQuery = buildSplitResponses(req, expenseID: try expense.requireID())
+        async let paidByQuery = User.requireFind(expense.$paidBy.id, on: req.db, notFoundMessage: "Payer not found")
+        let (splitResponses, paidByUser) = try await (splitsQuery, paidByQuery)
 
         let response = CreateExpenseResponse(
             id: try expense.requireID(),
@@ -37,7 +45,7 @@ struct ExpenseController: RouteCollection {
             createdAt: expense.createdAt ?? Date()
         )
 
-        var httpResponse = Response(status: .created)
+        let httpResponse = Response(status: .created)
         try httpResponse.content.encode(response)
         return httpResponse
     }
@@ -46,18 +54,15 @@ struct ExpenseController: RouteCollection {
         let ctx = try req.groupContext
 
         let expenses = try await req.services.expenses.list(groupID: ctx.groupID)
-        var responses: [ExpenseListResponse] = []
-
-        for expense in expenses {
-            let paidByUser = try await User.requireFind(expense.$paidBy.id, on: req.db, notFoundMessage: "Payer not found")
-            responses.append(ExpenseListResponse(
+        let responses = try expenses.map { expense in
+            ExpenseListResponse(
                 id: try expense.requireID(),
                 title: expense.title,
                 amount: expense.amount,
                 currency: expense.currency,
-                paidBy: try paidByUser.toBasicInfo(),
+                paidBy: try expense.paidBy.toBasicInfo(),
                 createdAt: expense.createdAt ?? Date()
-            ))
+            )
         }
 
         return ListExpensesResponse(expenses: responses, total: responses.count)
@@ -90,23 +95,19 @@ struct ExpenseController: RouteCollection {
 
     private func buildSplitResponses(_ req: Request, expenseID: UUID) async throws -> [ExpenseSplitResponse] {
         let splits = try await req.services.expenses.getSplits(expenseID: expenseID)
-        var responses: [ExpenseSplitResponse] = []
-
-        for split in splits {
-            let user = try await User.requireFind(split.$user.id, on: req.db)
-            responses.append(ExpenseSplitResponse(
+        return try splits.map { split in
+            ExpenseSplitResponse(
                 id: try split.requireID(),
-                user: try user.toBasicInfo(),
+                user: try split.user.toBasicInfo(),
                 amount: split.amount
-            ))
+            )
         }
-
-        return responses
     }
 
     private func buildDetailsResponse(_ req: Request, expense: Expense, groupID: UUID) async throws -> ExpenseDetailsResponse {
-        let paidByUser = try await User.requireFind(expense.$paidBy.id, on: req.db, notFoundMessage: "Payer not found")
-        let splitResponses = try await buildSplitResponses(req, expenseID: try expense.requireID())
+        async let paidByQuery = User.requireFind(expense.$paidBy.id, on: req.db, notFoundMessage: "Payer not found")
+        async let splitsQuery = buildSplitResponses(req, expenseID: try expense.requireID())
+        let (paidByUser, splitResponses) = try await (paidByQuery, splitsQuery)
 
         return ExpenseDetailsResponse(
             id: try expense.requireID(),

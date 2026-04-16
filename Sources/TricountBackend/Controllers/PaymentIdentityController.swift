@@ -3,11 +3,18 @@ import Fluent
 
 struct PaymentIdentityController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
-        let identity = routes.grouped("payment-identity").grouped(JWTAuthMiddleware())
+        let identity = routes
+            .grouped("payment-identity")
+            .grouped(JWTAuthMiddleware())
+            .grouped(VerifiedUserMiddleware())
+            .grouped(IdempotencyMiddleware())
 
         identity.post(use: setPaymentIdentity)
+            .documented(auth: .bearer, response: .raw(PaymentIdentityResponse.self), requestBody: .json(UpdatePaymentIdentityRequest.self))
         identity.get(use: getPaymentIdentity)
+            .documented(auth: .bearer, response: .raw(PaymentIdentityResponse.self))
         identity.delete(use: deletePaymentIdentity)
+            .documented(auth: .bearer, response: .empty())
     }
 
     func setPaymentIdentity(req: Request) async throws -> PaymentIdentityResponse {

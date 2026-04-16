@@ -18,10 +18,10 @@ extension Application {
             }
 
             // In testing, write to a temp build directory to avoid polluting the project.
-            // Otherwise, write directly to Public/docs/ (the only output location).
+            // Otherwise, write directly to Public/ (served at the web root).
             let relativePath = environment == .testing
                 ? ".build/generated-route-docs"
-                : "Public/docs"
+                : "Public"
             return URL(fileURLWithPath: directory.workingDirectory, isDirectory: true)
                 .appendingPathComponent(relativePath, isDirectory: true)
         }

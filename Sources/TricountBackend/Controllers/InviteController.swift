@@ -3,96 +3,65 @@ import Fluent
 
 struct InviteController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
-        let auth = routes.grouped(JWTAuthMiddleware())
+        let auth = routes
+            .grouped(JWTAuthMiddleware())
+            .grouped(VerifiedUserMiddleware())
+            .grouped(IdempotencyMiddleware())
 
-        // Group-scoped invite routes (require membership)
-        let groupInvites = auth
+        // Group-scoped: singleton invite (admin fetches to share)
+        let groupInvite = auth
             .grouped("groups", ":id")
             .grouped(GroupMemberMiddleware())
-            .grouped("invites")
-        groupInvites.post(use: createInvite)
-        groupInvites.get(use: listUserInvites)
+            .grouped("invite")
+        groupInvite.get(use: getGroupInvite)
+            .documented(auth: .bearer, response: .raw(GroupInviteResponse.self))
 
-        // Standalone invite routes (auth only, no group context)
+        // Standalone invite routes
         let inviteRoutes = auth.grouped("invites")
         inviteRoutes.post("accept", use: acceptInvite)
+            .documented(auth: .bearer, response: .raw(AcceptInviteResponse.self), requestBody: .json(AcceptInviteRequest.self))
         inviteRoutes.get(":token", use: getInviteByToken)
+            .documented(auth: .bearer, response: .raw(InvitePreviewResponse.self))
     }
 
-    func createInvite(req: Request) async throws -> Response {
+    func getGroupInvite(req: Request) async throws -> GroupInviteResponse {
         let ctx = try req.groupContext
-
-        let input = try req.content.decode(CreateInviteRequest.self)
-        let invite = try await req.services.invites.create(groupID: ctx.groupID, input, invitedByID: ctx.userID)
-
-        let response = CreateInviteResponse(
+        let invite = try await req.services.invites.getOrCreate(groupID: ctx.groupID, actorID: ctx.userID)
+        req.setDevelopmentDebugHeader(name: "X-Debug-Invite-Token", value: invite.inviteToken)
+        return GroupInviteResponse(
             id: try invite.requireID(),
-            groupId: ctx.groupID,
-            inviteeContact: invite.inviteeContact,
+            groupId: invite.$group.id,
             inviteToken: invite.inviteToken,
-            status: invite.status,
-            expiresAt: invite.expiresAt,
+            invitedBy: invite.$invitedBy.id,
             createdAt: invite.createdAt ?? Date()
         )
-
-        var httpResponse = Response(status: .created)
-        try httpResponse.content.encode(response)
-        return httpResponse
-    }
-
-    func listUserInvites(req: Request) async throws -> ListInvitesResponse {
-        let userID = try req.authenticatedUserID
-
-        let invites = try await req.services.invites.listForUser(userID: userID)
-        var responses: [InviteListResponse] = []
-
-        for invite in invites {
-            let group = try await Group.requireFind(invite.$group.id, on: req.db)
-            let inviter = try await User.requireFind(invite.$invitedBy.id, on: req.db)
-
-            responses.append(InviteListResponse(
-                id: try invite.requireID(),
-                group: GroupBasicInfo(id: try group.requireID(), name: group.name, iconUrl: group.iconUrl),
-                invitedBy: try inviter.toBasicInfo(),
-                inviteeContact: invite.inviteeContact,
-                status: invite.status,
-                expiresAt: invite.expiresAt,
-                createdAt: invite.createdAt ?? Date()
-            ))
-        }
-
-        return ListInvitesResponse(invites: responses, total: responses.count)
     }
 
     func acceptInvite(req: Request) async throws -> AcceptInviteResponse {
         let userID = try req.authenticatedUserID
         let input = try req.content.decode(AcceptInviteRequest.self)
-
-        try await req.services.invites.accept(input, userID: userID)
-        let invite = try await req.services.invites.getByToken(input.inviteToken)
-
+        let groupID = try await req.services.invites.accept(input, userID: userID)
         return AcceptInviteResponse(
-            groupId: invite.$group.id,
+            groupId: groupID,
             status: "success",
             message: "Successfully joined the group"
         )
     }
 
-    func getInviteByToken(req: Request) async throws -> CreateInviteResponse {
+    func getInviteByToken(req: Request) async throws -> InvitePreviewResponse {
         guard let token = req.parameters.get("token", as: String.self) else {
             throw Abort(.badRequest, reason: "Invalid token")
         }
 
         let invite = try await req.services.invites.getByToken(token)
+        async let groupQuery = Group.requireFind(invite.$group.id, on: req.db)
+        async let inviterQuery = User.requireFind(invite.$invitedBy.id, on: req.db)
+        let (group, inviter) = try await (groupQuery, inviterQuery)
 
-        return CreateInviteResponse(
-            id: try invite.requireID(),
-            groupId: invite.$group.id,
-            inviteeContact: invite.inviteeContact,
+        return InvitePreviewResponse(
             inviteToken: invite.inviteToken,
-            status: invite.status,
-            expiresAt: invite.expiresAt,
-            createdAt: invite.createdAt ?? Date()
+            group: GroupBasicInfo(id: try group.requireID(), name: group.name, iconUrl: group.iconUrl),
+            invitedBy: try inviter.toBasicInfo()
         )
     }
 }

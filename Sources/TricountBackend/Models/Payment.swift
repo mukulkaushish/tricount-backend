@@ -22,7 +22,7 @@ final class Payment: Model, @unchecked Sendable {
     @Timestamp(key: "created_at", on: .create)
     var createdAt: Date?
 
-    @Field(key: "reversed_at")
+    @OptionalField(key: "reversed_at")
     var reversedAt: Date?
 
     init() {}

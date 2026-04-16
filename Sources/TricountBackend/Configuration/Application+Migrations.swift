@@ -38,5 +38,12 @@ extension Application {
 
         // Phase 5: Group Invites & Activity Logs
         migrations.add(CreateGroupActivityTables())
+        migrations.add(AlterGroupInvitesSingleton())
+
+        // Phase 6: Performance
+        migrations.add(AddCompositeIndexes())
+
+        // Phase 7: Sync queue support
+        migrations.add(CreateSyncOperations())
     }
 }

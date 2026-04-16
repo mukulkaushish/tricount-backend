@@ -22,7 +22,7 @@ final class Expense: Model, @unchecked Sendable {
     @Field(key: "title")
     var title: String
 
-    @Field(key: "notes")
+    @OptionalField(key: "notes")
     var notes: String?
 
     @Timestamp(key: "created_at", on: .create)
@@ -31,7 +31,7 @@ final class Expense: Model, @unchecked Sendable {
     @Timestamp(key: "updated_at", on: .update)
     var updatedAt: Date?
 
-    @Field(key: "deleted_at")
+    @OptionalField(key: "deleted_at")
     var deletedAt: Date?
 
     @Children(for: \.$expense)

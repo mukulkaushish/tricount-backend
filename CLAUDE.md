@@ -25,7 +25,7 @@ docker compose up mysql -d
 swift package resolve
 export JWT_SECRET="your-strong-random-secret-here"
 swift run
-# Server: http://localhost:8080 — Health: GET /
+# Server: http://localhost:8080
 ```
 
 ---
@@ -208,6 +208,50 @@ Use `AuthError` enum cases for auth-domain errors.
 All monetary operations write to `ledger_entries`. Balances are derived, never stored.
 Amounts are `Int64` in minor units (paise). Currency default: `INR`.
 
+Consistency rules:
+- Expense create / update / delete and payment create / reverse run inside `req.db.transaction`.
+- `ExpenseService.update` replaces splits + ledger entries in place (purge-then-rewrite).
+- `ExpenseService.delete` soft-deletes the expense but hard-deletes its splits and ledger entries.
+- `PaymentService.reverse` re-reads the row inside the transaction to close the check-then-act race.
+- `BalanceService` defensively excludes entries whose reference is a reversed payment or a soft-deleted expense.
+
+### Idempotency (sync queue)
+
+Mutation endpoints (under `JWTAuthMiddleware` + `VerifiedUserMiddleware`) are wrapped in `IdempotencyMiddleware`. Clients can send:
+
+```
+Idempotency-Key: <client-generated-uuid-or-string, 8–128 chars>
+```
+
+Behavior:
+- Key absent → pass-through.
+- Key present, first request → handler runs, and if the response is 2xx the `(method, path, body)` hash and the serialized response are cached in `sync_operations` for 24h.
+- Key present, replay → same `(user, key)` + matching request hash returns the cached status + body with a `Idempotent-Replayed: true` header.
+- Key present, different request body with same key → `422` (idempotency conflict).
+
+Use from the Flutter client for any queued mutation so retry-after-offline doesn't create duplicates.
+
+### Migration conventions
+
+- Files live in `Sources/TricountBackend/Migrations/` with numeric prefixes for human chronology; execution order is the registration order in `Configuration/Application+Migrations.swift`.
+- Every `prepare(on:)` must have a symmetrical `revert(on:)` that drops whatever it created.
+- Raw SQL `CREATE INDEX` must have a matching `DROP INDEX` in revert.
+- Add composite indexes alongside single-column ones when filters stack (see `026_AddCompositeIndexes.swift`).
+- `RowId` fields intended to be nullable should use `@OptionalField` on the model side to avoid Fluent's "cannot access field before initialized" crash.
+
+### Validation rules
+
+| Field | Rule |
+|---|---|
+| Group name | trim, non-empty, ≤100 chars |
+| Expense title | trim, non-empty, ≤200 chars |
+| Expense notes | optional, trim, ≤2000 chars |
+| Expense amount | > 0, ≤1e11 paise |
+| Expense splits | ≥1, unique users, all amounts > 0, sum == expense.amount |
+| Payment amount | > 0, ≤1e11 paise |
+| Payment payer/receiver | must be distinct, both active members |
+| Payment identity | at least one of `upi_id` / `qr_url`, trimmed, non-empty |
+
 ---
 
 ## API Endpoints
@@ -244,15 +288,16 @@ Amounts are `Int64` in minor units (paise). Currency default: `INR`.
 
 | Method | Path | Notes |
 |--------|------|-------|
-| `POST` | `/v1/groups` | Create (no group context) |
-| `GET` | `/v1/groups` | List user's groups |
+| `POST` | `/v1/groups` | Create (no group context). Name trimmed, 1–100 chars. Flags default `false`. |
+| `GET` | `/v1/groups` | List user's active groups |
 | `GET` | `/v1/groups/:id` | Group details |
-| `PUT` | `/v1/groups/:id` | Update (admin only) |
-| `POST` | `/v1/groups/:id/members` | Add member (admin) |
-| `GET` | `/v1/groups/:id/members` | List members |
-| `DELETE` | `/v1/groups/:id/members/:userId` | Remove (admin) |
-| `PUT` | `/v1/groups/:id/members/:userId/role` | Change role (admin) |
-| `POST` | `/v1/groups/:id/leave` | Leave group |
+| `PUT` | `/v1/groups/:id` | Update (admin only). Name validated identically to create |
+| `DELETE` | `/v1/groups/:id` | Delete group (creator only). Blocked if any member has a non-zero balance. Cascades to members, invite, activities, payments, expenses, splits, ledger |
+| `POST` | `/v1/groups/:id/members` | Add by `{email, name?}` (admin). Creates placeholder (unverified) user if email unknown. Sends invitation email; returns `requires_verification` + `invite_token` |
+| `GET` | `/v1/groups/:id/members` | List members (`is_verified`, `is_placeholder` flags included) |
+| `DELETE` | `/v1/groups/:id/members/:userId` | Remove (admin). Blocks self-remove, last-admin remove, and removal with non-zero balance |
+| `PUT` | `/v1/groups/:id/members/:userId/role` | Change role (admin). Role ∈ `{admin, member}`. Blocks self-demotion and last-admin demotion |
+| `POST` | `/v1/groups/:id/leave` | Leave group. Blocks on non-zero balance or last-admin |
 | `GET` | `/v1/groups/:id/activities` | Activity log |
 | `GET` | `/v1/groups/:id/balance` | Group balances |
 | `GET` | `/v1/groups/:id/balance/simplified` | Simplified debts |
@@ -280,10 +325,15 @@ Amounts are `Int64` in minor units (paise). Currency default: `INR`.
 
 | Method | Path | Notes |
 |--------|------|-------|
-| `POST` | `/v1/groups/:id/invites` | Create (admin, group-scoped) |
-| `GET` | `/v1/groups/:id/invites` | List (group-scoped) |
-| `POST` | `/v1/invites/accept` | Accept invite |
-| `GET` | `/v1/invites/:token` | Get invite by token |
+| `GET` | `/v1/groups/:id/invite` | Fetch/create singleton invite token (admin) |
+| `POST` | `/v1/invites/accept` | Accept invite (requires pre-existing membership row) |
+| `GET` | `/v1/invites/:token` | Preview invite group/inviter by token |
+
+### Users (Protected — Bearer JWT + verified)
+
+| Method | Path | Notes |
+|--------|------|-------|
+| `GET` | `/v1/users/status?email=...` | Lookup probe before inviting (rate-limited 30/min) |
 
 ### Payment Identity (Protected — Bearer JWT)
 
@@ -334,4 +384,4 @@ docker compose up --build
 | 6 | Done | Invites |
 | 7 | Done | Payment identity (UPI/QR) |
 | 8 | Done | Balance computation, debt simplification |
-| 9 | Planned | Sync queue |
+| 9 | Done | Sync queue (idempotency middleware, composite indexes) |
