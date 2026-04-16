@@ -1,12 +1,12 @@
 import Vapor
 
 func routes(_ app: Application) throws {
-    app.documented().getRaw { _ async in
-        HealthCheckResponse(status: "ok", service: "tricount-backend")
+    app.get { _ in
+        Response(status: .seeOther, headers: ["Location": "/docs/index.html"])
     }
 
-    app.get("docs") { _ in
-        Response(status: .seeOther, headers: ["Location": "/docs/index.html"])
+    app.get("health") { _ async in
+        HealthCheckResponse(status: "ok", service: "tricount-backend")
     }
 
     let v1 = app.grouped("v1")
